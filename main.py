@@ -23,6 +23,26 @@ CTA_VARIANTS = [
     "",  # في بعض الأحيان بدون أي دعوة لتبدو المشاركة طبيعية 100%
 ]
 
+def contains_video(text):
+    """فحص ما إذا كان المنشور يحتوي على فيديو بأي شكل من الأشكال"""
+    text_lower = text.lower()
+    
+    # 1. فحص امتدادات ملفات الفيديو
+    video_extensions = r'\.(mp4|m3u8|mov|webm|avi|mkv|flv|wmv)(\?|\s|$)'
+    if re.search(video_extensions, text_lower):
+        return True
+        
+    # 2. فحص روابط منصات ومواقع الفيديوهات الشهيرة
+    video_domains = [
+        "youtube.com", "youtu.be", "vimeo.com", "tiktok.com",
+        "rumble.com", "bitchute.com", "nostr.build/av/", "video/", "video"
+    ]
+    for domain in video_domains:
+        if domain in text_lower:
+            return True
+            
+    return False
+
 def is_spam(text):
     """فحص المنشورات لتجنب الرد على السبام وإعلانات الكريبتو البوتات"""
     text_lower = text.lower()
@@ -146,13 +166,13 @@ async def main():
 
     bot_hex = bot_pk.to_hex() if bot_pk else ""
 
-    # 2️⃣ جلب تاريخ آخر 100 رد قام بها الحساب لمنع التكرار عبر التشغيلات المتقاطعة
+    # 2️⃣ جلب تاريخ آخر 200 رد قام بها الحساب لمنع التكرار تماماً
     already_replied_events = set()
     already_replied_authors = set()
 
     if bot_pk:
         print("Fetching recent reply history from Nostr relays to prevent duplicates...")
-        history_filter = Filter().author(bot_pk).kind(Kind(1)).limit(100)
+        history_filter = Filter().author(bot_pk).kind(Kind(1)).limit(200)
         try:
             history_obj = await client.fetch_events(history_filter, timedelta(seconds=10))
         except Exception:
@@ -173,8 +193,9 @@ async def main():
 
         for h_event in history_list:
             try:
-                for t in h_event.tags():
-                    vec = t.as_vec()
+                tags_iter = h_event.tags() if callable(h_event.tags) else h_event.tags
+                for t in tags_iter:
+                    vec = t.as_vec() if hasattr(t, "as_vec") else list(t)
                     if len(vec) >= 2:
                         if vec[0] == 'e':
                             already_replied_events.add(vec[1])
@@ -239,7 +260,7 @@ async def main():
 
         # 🛑 فحص 2: استبعاد المنشور إذا تم الرد عليه سابقاً في أي تشغيلة
         if event_id_hex in already_replied_events:
-            print(f"Skipping post {event_id_hex[:8]} (Already replied to in a previous run).")
+            print(f"Skipping post {event_id_hex[:8]} (Already replied to previously).")
             continue
 
         # 🛑 فحص 3: استبعاد صاحب المنشور إذا تم الرد عليه حديثاً
@@ -257,9 +278,12 @@ async def main():
         if not clean_content or len(clean_content) < 6:
             continue
 
-        if re.match(r'^https?://\S+\.(jpg|jpeg|png|gif|mp4|webm)$', clean_content, re.IGNORECASE):
+        # 🛑 فحص 4: التجاهل التام لأي منشور يحتوي على فيديو
+        if contains_video(clean_content):
+            print(f"Skipping post {event_id_hex[:8]} (Contains video).")
             continue
 
+        # فحص السبام والإعلانات
         if is_spam(clean_content):
             continue
 
