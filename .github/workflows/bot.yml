@@ -1,1 +1,45 @@
+name: Nostr Gaza Bot Runner
 
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */8 * * *' # أصبح يعمل كل 8 ساعات بدلاً من 6 ساعات
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    permissions:
+      actions: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install nostr-sdk requests
+
+      - name: Execute Nostr Bot
+        env:
+          NOSTR_NSEC: ${{ secrets.NOSTR_NSEC }}
+          NOSTR_PRIVATE_KEY: ${{ secrets.NOSTR_PRIVATE_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          python main.py
+
+      - name: Auto Re-trigger Workflow (With Breather)
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Waiting 5 minutes before starting the next cycle..."
+          sleep 300 # 👈 ينتظر 300 ثانية (5 دقائق) استراحة قبل التكرار
+          gh workflow run "Nostr Gaza Bot Runner" --ref main
