@@ -1,172 +1,221 @@
 import os
-import sys
-import time
+import re
 import random
+import asyncio
 import requests
-from nostr_sdk import Keys, Client, Filter, Kind, EventBuilder
+from datetime import timedelta
+from nostr_sdk import (
+    Client, NostrSigner, Keys, Filter, EventBuilder, Tag, Kind,
+    NostrConnect, NostrConnectUri, RelayUrl
+)
 
-# ----------------------------------------------------
-# 1. الإعدادات والمتغيرات البيئية
-# ----------------------------------------------------
-PRIVATE_KEY = os.getenv("NOSTR_PRIVATE_KEY")
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+# جلب الإعدادات من GitHub Secrets
+NOSTR_SECRET = os.getenv("NOSTR_NSEC", "").strip()
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 
-if not PRIVATE_KEY or not DEEPSEEK_API_KEY:
-    print("خطأ: يرجى إدخال NOSTR_PRIVATE_KEY و DEEPSEEK_API_KEY في المتغيرات البيئية.")
-    sys.exit(1)
+MAX_REPLIES = 10  # الحد الأقصى: 10 ردود فقط لكل تشغيلة
 
-REST_BETWEEN_CYCLES = 600  # الانتظار 10 دقائق بين كل دورة وأخرى
-BATCH_SIZE = 10           # عدد الردود القصوى لكل دورة
-
-# تنويع عبارات الدعوة (CTA)
+# تنويع عبارات الدعوة (CTA) لضمان عدم التكرار وتبدو حركة بشرية
 CTA_VARIANTS = [
     "\n\n(Btw, check my pinned post if you'd like to support my family in Gaza 🙏)",
     "\n\n(Feel free to take a look at my pinned post for our story in Gaza.)",
     "\n\n(Shared more about my family's situation in Gaza on my pinned post if you have a sec.)",
-    "",
+    "",  # في بعض الأحيان بدون أي دعوة لتبدو المشاركة طبيعية 100%
 ]
 
-# تعليمات الذكاء الاصطناعي
-SYSTEM_PROMPT = """You are a genuine human user on Nostr reacting naturally to posts.
-Rules:
-1. Keep your reply to 1 concise, direct, human sentence.
-2. Be empathetic, casual, and down-to-earth.
-3. NEVER start with generic AI phrases like "I completely agree", "Great perspective", etc.
-4. Do NOT mention Gaza or donations in the comment body itself; just respond naturally to what the author wrote.
-5. If the post is offensive, spam, or incoherent, respond with 'SKIP'."""
+def is_spam(text):
+    """فحص المنشورات لتجنب الرد على السبام وإعلانات الكريبتو البوتات"""
+    text_lower = text.lower()
+    
+    url_count = len(re.findall(r'https?://\S+', text))
+    if url_count >= 2:
+        return True
+        
+    for kw in ["solana", "trycloudflare", "kill-fee", "moneymaker", "airdrop", "presale"]:
+        if kw in text_lower:
+            return True
+            
+    return False
 
-# ----------------------------------------------------
-# 2. الدوال المساعدة
-# ----------------------------------------------------
-
-def generate_ai_reply(post_content):
-    url = "https://api.deepseek.com/v1/chat/completions"
+def generate_ai_reply(prompt_text):
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json"
     }
+    
+    # توجيهات الذكاء الاصطناعي للتفاعل الطبيعي فقط دون تكرار نفس الرسالة الترويجية
+    system_instruction = (
+        "You are Imad, a genuine human user on Nostr reacting naturally to posts.\n\n"
+        "RULES:\n"
+        "1. Keep your reply to 1 concise, direct, and empathetic human sentence reacting to what the author wrote.\n"
+        "2. NEVER use generic bot phrases like 'I completely agree', 'Great perspective', 'Thank you for sharing', or rigid corporate language.\n"
+        "3. Do NOT mention Gaza or donations in your direct response text (a separate system handles that dynamically).\n"
+        "4. If the post is pure spam, automated code, or total nonsense, respond ONLY with the exact word: SKIP"
+    )
+
     payload = {
         "model": "deepseek-chat",
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Post: \"{post_content}\""}
+            {"role": "system", "content": system_instruction},
+            {"role": "user", "content": f"Post to reply to: '{prompt_text}'"}
         ],
-        "temperature": 0.7,
-        "max_tokens": 80
+        "temperature": 0.7
     }
-
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=15)
+        response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=15)
         if response.status_code == 200:
-            reply = response.json()["choices"][0]["message"]["content"].strip()
-            if "SKIP" in reply or len(reply) < 5:
+            res_text = response.json()["choices"][0]["message"]["content"].strip()
+            if "SKIP" in res_text or len(res_text) < 5:
                 return None
-            return reply
-        else:
-            print(f"DeepSeek API Error: {response.status_code} - {response.text}")
-            return None
-    except Exception as e:
-        print(f"DeepSeek Connection Error: {e}")
-        return None
-
-
-def is_valid_event(event_content, author, replied_authors):
-    content = event_content.strip()
-    if len(content) < 15:
-        return False
-    if author in replied_authors:
-        return False
-    if content.startswith("http://") or content.startswith("https://"):
-        return False
-    bot_keywords = ["as an ai", "i cannot", "language model", "bot"]
-    if any(kw in content.lower() for kw in bot_keywords):
-        return False
-    return True
-
-
-# ----------------------------------------------------
-# 3. حلقة التشغيل الرئيسية
-# ----------------------------------------------------
-
-def main():
-    try:
-        keys = Keys.parse(PRIVATE_KEY.strip())
-        client = Client(keys)
-        print("✅ تم إعداد المفتاح الخاص بنجاح.")
-    except Exception as e:
-        print(f"❌ خطأ في قراءة المفتاح الخاص: {e}")
-        sys.exit(1)
-
-    # السيرفرات المستخدمة (Relays)
-    relays = [
-        "wss://relay.damus.io",
-        "wss://nos.lol",
-        "wss://relay.nostr.band",
-        "wss://purplepag.es"
-    ]
-    for relay in relays:
-        client.add_relay(relay)
-
-    client.connect()
-    print("تم الاتصال بسيرفرات Nostr بنجاح.")
-
-    replied_authors = set()
-
-    while True:
-        try:
-            print("\n--- بدء دورة معالجة جديدة ---")
             
-            filter_req = Filter().kind(Kind(1)).limit(30)
-            events = client.get_events_of([filter_req], timeout=10)
+            # دمج الرد مع صيغة CTA عشوائية
+            selected_cta = random.choice(CTA_VARIANTS)
+            return f"{res_text}{selected_cta}"
+    except Exception as e:
+        print(f"Error calling DeepSeek API: {e}")
+    return None
 
-            processed_count = 0
+async def main():
+    if not NOSTR_SECRET or not DEEPSEEK_API_KEY:
+        print("Error: Missing secrets in GitHub (NOSTR_NSEC or DEEPSEEK_API_KEY).")
+        return
 
-            for event in events:
-                if processed_count >= BATCH_SIZE:
-                    break
+    # المصادقة عبر NIP-46 أو nsec
+    if NOSTR_SECRET.startswith("nsec1"):
+        print("Authenticating using Direct Private Key (nsec)...")
+        keys = Keys.parse(NOSTR_SECRET)
+        signer = NostrSigner.keys(keys)
+    elif NOSTR_SECRET.startswith("bunker://") or NOSTR_SECRET.startswith("nostrconnect://"):
+        print("Authenticating using Nostr Connect (NIP-46 Remote Signer)...")
+        app_keys = Keys.generate()
+        
+        try:
+            uri = NostrConnectUri.parse(NOSTR_SECRET)
+        except Exception:
+            uri = NOSTR_SECRET
 
-                author = event.author().to_hex()
-                content = event.content()
+        opts = None
+        try:
+            from nostr_sdk import NostrConnectOptions
+            opts = NostrConnectOptions()
+        except Exception:
+            try:
+                from nostr_sdk import Options
+                opts = Options()
+            except Exception:
+                opts = None
 
-                if not is_valid_event(content, author, replied_authors):
-                    continue
+        timeout = timedelta(seconds=30)
+        try:
+            nc = NostrConnect(uri, app_keys, timeout, opts)
+        except Exception:
+            nc = NostrConnect(uri, app_keys, 30, opts)
 
-                print(f"\nمعالجة منشور من {author[:8]}...: {content[:40]}...")
+        signer = NostrSigner.nostr_connect(nc)
+    else:
+        print("Error: Invalid NOSTR_NSEC format.")
+        return
 
-                ai_reply = generate_ai_reply(content)
-                if not ai_reply:
-                    print("تخطي (الرد غير مناسب أو رفضه النظام).")
-                    continue
+    client = Client(signer)
+    relay_list = ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"]
+    for r in relay_list:
+        try:
+            parsed_url = RelayUrl.parse(r)
+            await client.add_relay(parsed_url)
+        except Exception:
+            try:
+                parsed_url = RelayUrl(r)
+                await client.add_relay(parsed_url)
+            except Exception:
+                await client.add_relay(r)
 
-                selected_cta = random.choice(CTA_VARIANTS)
-                final_reply = f"{ai_reply}{selected_cta}"
+    await client.connect()
+    print("Successfully connected to Nostr Relays!")
 
-                builder = EventBuilder.text_note_reply(
-                    content=final_reply,
-                    reply_to=event,
-                    relay_url=None
-                )
-                
-                client.send_event_builder(builder)
-                print(f"✅ تم نشر الرد: {final_reply}")
-
-                replied_authors.add(author)
-                processed_count += 1
-
-                time.sleep(random.randint(5, 15))
-
-            print(f"\nاكتملت الدورة. تم نشر {processed_count} ردود.")
-            print(f"الانتظار لمدة {REST_BETWEEN_CYCLES} ثانية ({REST_BETWEEN_CYCLES // 60} دقائق) قبل الدورة القادمة...")
-            time.sleep(REST_BETWEEN_CYCLES)
-
-        except KeyboardInterrupt:
-            print("\nتم إيقاف البوت يدوياً.")
-            sys.exit(0)
+    # جلب أحدث 50 منشوراً لاختيار أفضل 10 منها
+    f = Filter().kind(Kind(1)).limit(50)
+    
+    try:
+        events_obj = await client.fetch_events(f, timedelta(seconds=10))
+    except Exception:
+        try:
+            events_obj = await client.fetch_events(f, 10)
         except Exception as e:
-            print(f"\n⚠️ حدث خطأ غير متوقع في الحلقة: {e}")
-            print("إعادة المحاولة بعد 60 ثانية...")
-            time.sleep(60)
+            print(f"Error fetching events: {e}")
+            return
 
+    if hasattr(events_obj, "to_vec"):
+        events_list = events_obj.to_vec()
+    elif hasattr(events_obj, "to_list"):
+        events_list = events_obj.to_list()
+    else:
+        try:
+            events_list = list(events_obj)
+        except Exception:
+            events_list = []
+
+    if not events_list:
+        print("No events found.")
+        return
+
+    replies_count = 0
+    processed_authors = set()
+
+    for event in events_list:
+        if replies_count >= MAX_REPLIES:
+            print(f"Reached limit of {MAX_REPLIES} replies. Stopping execution.")
+            break
+
+        try:
+            content = event.content()
+        except TypeError:
+            content = event.content
+
+        if is_spam(content):
+            continue
+
+        try:
+            author_hex = event.author().to_hex()
+            author_pk = event.author()
+        except TypeError:
+            author_hex = event.author.to_hex()
+            author_pk = event.author
+
+        # تجنب الرد على نفس الشخص مرتين في نفس التشغيلة
+        if author_hex in processed_authors:
+            continue
+
+        try:
+            event_id = event.id()
+        except TypeError:
+            event_id = event.id
+
+        print(f"[{replies_count + 1}/{MAX_REPLIES}] Processing post from {author_hex[:8]}...")
+        
+        reply_text = generate_ai_reply(content)
+        if reply_text:
+            tags = [Tag.event(event_id), Tag.public_key(author_pk)]
+            
+            try:
+                builder = EventBuilder.text_note(reply_text).tags(tags)
+            except Exception:
+                try:
+                    builder = EventBuilder.text_note(reply_text)
+                except Exception:
+                    builder = EventBuilder(Kind(1), reply_text, tags)
+
+            await client.send_event_builder(builder)
+            replies_count += 1
+            processed_authors.add(author_hex)
+            print(f"Successfully posted reply #{replies_count}: {reply_text}")
+
+            # انتظار عشوائي بين 5 و 15 ثانية لتبدو الحركة بشرية
+            if replies_count < MAX_REPLIES:
+                sleep_time = random.randint(5, 15)
+                print(f"Waiting {sleep_time} seconds before next reply...")
+                await asyncio.sleep(sleep_time)
+
+    print(f"Finished! Posted {replies_count} replies in this run.")
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
