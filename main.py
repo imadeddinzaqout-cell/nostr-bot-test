@@ -3,20 +3,16 @@ import sys
 import time
 import random
 import requests
-from nostr_sdk import (
-    Keys, Client, Filter, Kind, EventBuilder,
-    Nip46Signer, NostrSigner, NostrConnectURI
-)
+from nostr_sdk import Keys, Client, Filter, Kind, EventBuilder
 
 # ----------------------------------------------------
 # 1. الإعدادات والمتغيرات البيئية
 # ----------------------------------------------------
-# يقرأ من NOSTR_BUNKER_URI أو NOSTR_PRIVATE_KEY تلقائياً
-SECRET_INPUT = os.getenv("NOSTR_BUNKER_URI") or os.getenv("NOSTR_PRIVATE_KEY")
+PRIVATE_KEY = os.getenv("NOSTR_PRIVATE_KEY")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 
-if not SECRET_INPUT or not DEEPSEEK_API_KEY:
-    print("خطأ: يرجى إدخال NOSTR_BUNKER_URI (أو NOSTR_PRIVATE_KEY) و DEEPSEEK_API_KEY في المتغيرات البيئية.")
+if not PRIVATE_KEY or not DEEPSEEK_API_KEY:
+    print("خطأ: يرجى إدخال NOSTR_PRIVATE_KEY و DEEPSEEK_API_KEY في المتغيرات البيئية.")
     sys.exit(1)
 
 REST_BETWEEN_CYCLES = 600  # الانتظار 10 دقائق بين كل دورة وأخرى
@@ -35,7 +31,7 @@ SYSTEM_PROMPT = """You are a genuine human user on Nostr reacting naturally to p
 Rules:
 1. Keep your reply to 1 concise, direct, human sentence.
 2. Be empathetic, casual, and down-to-earth.
-3. NEVER start with generic AI phrases like "I completely agree", "That's a fair point", or "Great perspective".
+3. NEVER start with generic AI phrases like "I completely agree", "Great perspective", etc.
 4. Do NOT mention Gaza or donations in the comment body itself; just respond naturally to what the author wrote.
 5. If the post is offensive, spam, or incoherent, respond with 'SKIP'."""
 
@@ -93,30 +89,13 @@ def is_valid_event(event_content, author, replied_authors):
 # ----------------------------------------------------
 
 def main():
-    secret_str = SECRET_INPUT.strip()
-
-    # إعداد الاتصال بناءً على نوع البيانات (Bunker أم المفتاح الخاص)
-    if secret_str.startswith("bunker://"):
-        print("🔗 تم اكتشاف رابط Bunker (NIP-46)، جاري الربط عن بُعد...")
-        try:
-            app_keys = Keys.generate()
-            bunker_uri = NostrConnectURI.parse(secret_str)
-            nip46_signer = Nip46Signer(bunker_uri, app_keys, timeout=20)
-            signer = NostrSigner.nip46(nip46_signer)
-            client = Client(signer)
-            print("✅ تم الربط مع الـ Bunker بنجاح.")
-        except Exception as e:
-            print(f"❌ فشل الاتصال بالـ Bunker: {e}")
-            sys.exit(1)
-    else:
-        print("🔑 تم اكتشاف مفتاح خاص مباشر، جاري إعداد التوقيع...")
-        try:
-            keys = Keys.parse(secret_str)
-            client = Client(keys)
-            print("✅ تم إعداد المفتاح بنجاح.")
-        except Exception as e:
-            print(f"❌ مفتاح غير صالح: {e}")
-            sys.exit(1)
+    try:
+        keys = Keys.parse(PRIVATE_KEY.strip())
+        client = Client(keys)
+        print("✅ تم إعداد المفتاح الخاص بنجاح.")
+    except Exception as e:
+        print(f"❌ خطأ في قراءة المفتاح الخاص: {e}")
+        sys.exit(1)
 
     # السيرفرات المستخدمة (Relays)
     relays = [
