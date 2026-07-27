@@ -26,6 +26,7 @@ jobs:
 
       - name: Execute Nostr Bot
         env:
+          NOSTR_NSEC: ${{ secrets.NOSTR_NSEC }}
           NOSTR_PRIVATE_KEY: ${{ secrets.NOSTR_PRIVATE_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
