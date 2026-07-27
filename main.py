@@ -4,32 +4,33 @@ import time
 import random
 import requests
 from nostr_sdk import (
-    Keys, Client, Filter, Kind, EventBuilder
+    Keys, Client, Filter, Kind, EventBuilder,
+    Nip46Signer, NostrSigner, NostrConnectURI
 )
 
 # ----------------------------------------------------
 # 1. الإعدادات والمتغيرات البيئية
 # ----------------------------------------------------
-PRIVATE_KEY = os.getenv("NOSTR_PRIVATE_KEY")
+# يقرأ من NOSTR_BUNKER_URI أو NOSTR_PRIVATE_KEY تلقائياً
+SECRET_INPUT = os.getenv("NOSTR_BUNKER_URI") or os.getenv("NOSTR_PRIVATE_KEY")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 
-if not PRIVATE_KEY or not DEEPSEEK_API_KEY:
-    print("خطأ: يرجى إدخال NOSTR_PRIVATE_KEY و DEEPSEEK_API_KEY في المتغيرات البيئية.")
+if not SECRET_INPUT or not DEEPSEEK_API_KEY:
+    print("خطأ: يرجى إدخال NOSTR_BUNKER_URI (أو NOSTR_PRIVATE_KEY) و DEEPSEEK_API_KEY في المتغيرات البيئية.")
     sys.exit(1)
 
-# إعدادات التوقيت وحجم الدفعة
 REST_BETWEEN_CYCLES = 600  # الانتظار 10 دقائق بين كل دورة وأخرى
 BATCH_SIZE = 10           # عدد الردود القصوى لكل دورة
 
-# تنويع عبارات الدعوة (CTA) لضمان طبيعية الحساب وعدم تكرار نفس النص
+# تنويع عبارات الدعوة (CTA)
 CTA_VARIANTS = [
     "\n\n(Btw, check my pinned post if you'd like to support my family in Gaza 🙏)",
     "\n\n(Feel free to take a look at my pinned post for our story in Gaza.)",
     "\n\n(Shared more about my family's situation in Gaza on my pinned post if you have a sec.)",
-    "",  # في بعض الأحيان بدون أي رابط دعوة لتبدو المشاركة طبيعية 100%
+    "",
 ]
 
-# تعليمات الذكاء الاصطناعي (System Prompt)
+# تعليمات الذكاء الاصطناعي
 SYSTEM_PROMPT = """You are a genuine human user on Nostr reacting naturally to posts.
 Rules:
 1. Keep your reply to 1 concise, direct, human sentence.
@@ -43,7 +44,6 @@ Rules:
 # ----------------------------------------------------
 
 def generate_ai_reply(post_content):
-    """الاتصال بـ API الخاص بـ DeepSeek لتوليد رد بشري طبيعي"""
     url = "https://api.deepseek.com/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
@@ -75,26 +75,16 @@ def generate_ai_reply(post_content):
 
 
 def is_valid_event(event_content, author, replied_authors):
-    """تصفية المنشورات غير المناسبة أو الروابط المباشرة أو التكرار"""
     content = event_content.strip()
-
-    # استبعاد المنشورات القصيرة جداً
     if len(content) < 15:
         return False
-
-    # عدم الرد على نفس الشخص مرتين في نفس الجلسة
     if author in replied_authors:
         return False
-
-    # استبعاد المنشورات التي تحتوي روابط فقط
     if content.startswith("http://") or content.startswith("https://"):
         return False
-
-    # استبعاد كلمات البوتات الشائعة
     bot_keywords = ["as an ai", "i cannot", "language model", "bot"]
     if any(kw in content.lower() for kw in bot_keywords):
         return False
-
     return True
 
 
@@ -103,9 +93,30 @@ def is_valid_event(event_content, author, replied_authors):
 # ----------------------------------------------------
 
 def main():
-    # إعداد مفاتيح Nostr والعميل
-    keys = Keys.parse(PRIVATE_KEY)
-    client = Client(keys)
+    secret_str = SECRET_INPUT.strip()
+
+    # إعداد الاتصال بناءً على نوع البيانات (Bunker أم المفتاح الخاص)
+    if secret_str.startswith("bunker://"):
+        print("🔗 تم اكتشاف رابط Bunker (NIP-46)، جاري الربط عن بُعد...")
+        try:
+            app_keys = Keys.generate()
+            bunker_uri = NostrConnectURI.parse(secret_str)
+            nip46_signer = Nip46Signer(bunker_uri, app_keys, timeout=20)
+            signer = NostrSigner.nip46(nip46_signer)
+            client = Client(signer)
+            print("✅ تم الربط مع الـ Bunker بنجاح.")
+        except Exception as e:
+            print(f"❌ فشل الاتصال بالـ Bunker: {e}")
+            sys.exit(1)
+    else:
+        print("🔑 تم اكتشاف مفتاح خاص مباشر، جاري إعداد التوقيع...")
+        try:
+            keys = Keys.parse(secret_str)
+            client = Client(keys)
+            print("✅ تم إعداد المفتاح بنجاح.")
+        except Exception as e:
+            print(f"❌ مفتاح غير صالح: {e}")
+            sys.exit(1)
 
     # السيرفرات المستخدمة (Relays)
     relays = [
@@ -126,7 +137,6 @@ def main():
         try:
             print("\n--- بدء دورة معالجة جديدة ---")
             
-            # جلب أحدث منشورات Kind 1
             filter_req = Filter().kind(Kind(1)).limit(30)
             events = client.get_events_of([filter_req], timeout=10)
 
@@ -144,17 +154,14 @@ def main():
 
                 print(f"\nمعالجة منشور من {author[:8]}...: {content[:40]}...")
 
-                # توليد الرد من الذكاء الاصطناعي
                 ai_reply = generate_ai_reply(content)
                 if not ai_reply:
                     print("تخطي (الرد غير مناسب أو رفضه النظام).")
                     continue
 
-                # دمج الرد مع صيغة CTA عشوائية
                 selected_cta = random.choice(CTA_VARIANTS)
                 final_reply = f"{ai_reply}{selected_cta}"
 
-                # نشر الرد على Nostr
                 builder = EventBuilder.text_note_reply(
                     content=final_reply,
                     reply_to=event,
@@ -164,11 +171,9 @@ def main():
                 client.send_event_builder(builder)
                 print(f"✅ تم نشر الرد: {final_reply}")
 
-                # إضافة الناشر إلى القائمة وزيادة العداد
                 replied_authors.add(author)
                 processed_count += 1
 
-                # تأخير عشوائي بسيط بين الرد والآخر (من 5 إلى 15 ثانية) لتبدو حركة بشرية
                 time.sleep(random.randint(5, 15))
 
             print(f"\nاكتملت الدورة. تم نشر {processed_count} ردود.")
