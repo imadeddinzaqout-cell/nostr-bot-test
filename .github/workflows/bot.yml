@@ -1,14 +1,17 @@
 name: Nostr Gaza Bot Runner
 
 on:
-  workflow_dispatch: # تتيح لك تشغيل البوت يدوياً
+  workflow_dispatch:
   schedule:
-    - cron: '0 */6 * * *' # إعادة تشغيل احتياطية كل 6 ساعات
+    - cron: '0 */6 * * *'
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 350 # يعمل لمدة 5 ساعات و50 دقيقة
+    timeout-minutes: 350
+    permissions: # 👈 إعطاء البوت صلاحية إعادة تشغيل نفسه
+      actions: write
+      contents: read
 
     steps:
       - name: Checkout code
@@ -33,7 +36,7 @@ jobs:
           python main.py
 
       - name: Auto Re-trigger Workflow (Seamless 24/7)
-        if: always() # يعمل دائماً عند انتهاء خطوة البوت
+        if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
