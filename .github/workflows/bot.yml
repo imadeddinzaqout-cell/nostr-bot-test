@@ -1,27 +1,32 @@
-name: Continuous Test Run
+name: Nostr Gaza Bot Runner
 
 on:
-  workflow_dispatch: # تشغيل يدوياً عند الضغط على زر Run workflow
+  workflow_dispatch: # تتيح لك تشغيل البوت يدوياً بزر Run Workflow
+  schedule:
+    - cron: '0 */6 * * *' # إعادة تشغيل تلقائية كل 6 ساعات لضمان استمرارية العمل
 
 jobs:
-  run-continuous:
+  run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 360 # الحد الأقصى للجلسة الواحدة (6 ساعات)
+    timeout-minutes: 350 # إيقاف تلقائي بعد 5 ساعات و50 دقيقة لتجنب تجاوز حد GitHub (360 دقيقة)
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
       - name: Install dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install nostr-sdk requests
 
-      - name: Run continuous bot
+      - name: Execute Nostr Bot
         env:
-          NOSTR_NSEC: ${{ secrets.NOSTR_NSEC }}
+          NOSTR_PRIVATE_KEY: ${{ secrets.NOSTR_PRIVATE_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-        run: python main.py
+        run: |
+          python main.py
