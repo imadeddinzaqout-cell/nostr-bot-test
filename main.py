@@ -46,7 +46,6 @@ def generate_ai_reply(prompt_text):
         "Content-Type": "application/json"
     }
     
-    # توجيهات الذكاء الاصطناعي للتفاعل الطبيعي فقط دون تكرار نفس الرسالة الترويجية
     system_instruction = (
         "You are Imad, a genuine human user on Nostr reacting naturally to posts.\n\n"
         "RULES:\n"
@@ -69,12 +68,10 @@ def generate_ai_reply(prompt_text):
         if response.status_code == 200:
             res_text = response.json()["choices"][0]["message"]["content"].strip()
             
-            # إذا طلب الذكاء الاصطناعي التخطي أو كان الرد قصيراً جداً
             if "SKIP" in res_text or "can't react" in res_text.lower() or len(res_text) < 5:
                 print("DeepSeek suggested SKIPPING this post.")
                 return None
             
-            # دمج الرد مع صيغة CTA عشوائية
             selected_cta = random.choice(CTA_VARIANTS)
             return f"{res_text}{selected_cta}"
     except Exception as e:
@@ -86,7 +83,7 @@ async def main():
         print("Error: Missing secrets in GitHub (NOSTR_NSEC or DEEPSEEK_API_KEY).")
         return
 
-    # المصادقة عبر NIP-46 أو nsec
+    # المصادقة
     if NOSTR_SECRET.startswith("nsec1"):
         print("Authenticating using Direct Private Key (nsec)...")
         keys = Keys.parse(NOSTR_SECRET)
@@ -138,7 +135,57 @@ async def main():
     await client.connect()
     print("Successfully connected to Nostr Relays!")
 
-    # جلب أحدث 50 منشوراً لاختيار أفضل 10 منها
+    # 1️⃣ جلب هوية البوت الخاصة لمنع الرد على نفسك
+    try:
+        bot_pk = await client.signer().public_key()
+    except Exception:
+        try:
+            bot_pk = signer.public_key()
+        except Exception:
+            bot_pk = None
+
+    bot_hex = bot_pk.to_hex() if bot_pk else ""
+
+    # 2️⃣ جلب تاريخ آخر 100 رد قام بها الحساب لمنع التكرار عبر التشغيلات المتقاطعة
+    already_replied_events = set()
+    already_replied_authors = set()
+
+    if bot_pk:
+        print("Fetching recent reply history from Nostr relays to prevent duplicates...")
+        history_filter = Filter().author(bot_pk).kind(Kind(1)).limit(100)
+        try:
+            history_obj = await client.fetch_events(history_filter, timedelta(seconds=10))
+        except Exception:
+            try:
+                history_obj = await client.fetch_events(history_filter, 10)
+            except Exception:
+                history_obj = []
+
+        if hasattr(history_obj, "to_vec"):
+            history_list = history_obj.to_vec()
+        elif hasattr(history_obj, "to_list"):
+            history_list = history_obj.to_list()
+        else:
+            try:
+                history_list = list(history_obj)
+            except Exception:
+                history_list = []
+
+        for h_event in history_list:
+            try:
+                for t in h_event.tags():
+                    vec = t.as_vec()
+                    if len(vec) >= 2:
+                        if vec[0] == 'e':
+                            already_replied_events.add(vec[1])
+                        elif vec[0] == 'p':
+                            already_replied_authors.add(vec[1])
+            except Exception:
+                pass
+
+        print(f"Loaded {len(already_replied_events)} previously replied posts and {len(already_replied_authors)} previous authors.")
+
+    # 3️⃣ جلب أحدث المنشورات للرد عليها
     f = Filter().kind(Kind(1)).limit(50)
     
     try:
@@ -173,25 +220,11 @@ async def main():
             break
 
         try:
-            content = event.content()
+            event_id_obj = event.id()
         except TypeError:
-            content = event.content
+            event_id_obj = event.id
 
-        # 🛑 [تعديل هام]: تنظيف النص وفحص الطول لمنع المنشورات الفارغة أو روابط الصور
-        clean_content = content.strip() if content else ""
-        
-        # استبعاد المنشورات الفارغة أو التي تقل عن 6 أحرف
-        if not clean_content or len(clean_content) < 6:
-            print("Skipping empty or too-short post.")
-            continue
-
-        # استبعاد المنشورات التي تحتوي فقط على رابط صورة/ميديا بدون نص وصفي
-        if re.match(r'^https?://\S+\.(jpg|jpeg|png|gif|mp4|webm)$', clean_content, re.IGNORECASE):
-            print("Skipping media-only post.")
-            continue
-
-        if is_spam(clean_content):
-            continue
+        event_id_hex = event_id_obj.to_hex() if hasattr(event_id_obj, "to_hex") else str(event_id_obj)
 
         try:
             author_hex = event.author().to_hex()
@@ -200,20 +233,41 @@ async def main():
             author_hex = event.author.to_hex()
             author_pk = event.author
 
-        # تجنب الرد على نفس الشخص مرتين في نفس التشغيلة
-        if author_hex in processed_authors:
+        # 🛑 فحص 1: منع الرد على حسابك أنت
+        if bot_hex and author_hex == bot_hex:
+            continue
+
+        # 🛑 فحص 2: استبعاد المنشور إذا تم الرد عليه سابقاً في أي تشغيلة
+        if event_id_hex in already_replied_events:
+            print(f"Skipping post {event_id_hex[:8]} (Already replied to in a previous run).")
+            continue
+
+        # 🛑 فحص 3: استبعاد صاحب المنشور إذا تم الرد عليه حديثاً
+        if author_hex in processed_authors or author_hex in already_replied_authors:
+            print(f"Skipping author {author_hex[:8]} (Already interacted with recently).")
             continue
 
         try:
-            event_id = event.id()
+            content = event.content()
         except TypeError:
-            event_id = event.id
+            content = event.content
+
+        clean_content = content.strip() if content else ""
+        
+        if not clean_content or len(clean_content) < 6:
+            continue
+
+        if re.match(r'^https?://\S+\.(jpg|jpeg|png|gif|mp4|webm)$', clean_content, re.IGNORECASE):
+            continue
+
+        if is_spam(clean_content):
+            continue
 
         print(f"[{replies_count + 1}/{MAX_REPLIES}] Processing post from {author_hex[:8]}...")
         
         reply_text = generate_ai_reply(clean_content)
         if reply_text:
-            tags = [Tag.event(event_id), Tag.public_key(author_pk)]
+            tags = [Tag.event(event_id_obj), Tag.public_key(author_pk)]
             
             try:
                 builder = EventBuilder.text_note(reply_text).tags(tags)
@@ -226,15 +280,15 @@ async def main():
             await client.send_event_builder(builder)
             replies_count += 1
             processed_authors.add(author_hex)
+            already_replied_events.add(event_id_hex)
             print(f"Successfully posted reply #{replies_count}: {reply_text}")
 
-            # انتظار عشوائي بين 5 و 15 ثانية لتبدو الحركة بشرية
             if replies_count < MAX_REPLIES:
                 sleep_time = random.randint(5, 15)
                 print(f"Waiting {sleep_time} seconds before next reply...")
                 await asyncio.sleep(sleep_time)
 
-    print(f"Finished! Posted {replies_count} replies in this run.")
+    print(f"Finished! Posted {replies_count} new unique replies in this run.")
 
 if __name__ == "__main__":
     asyncio.run(main())
