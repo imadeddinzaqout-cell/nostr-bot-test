@@ -38,6 +38,9 @@ def is_spam(text):
     return False
 
 def generate_ai_reply(prompt_text):
+    if not prompt_text or len(prompt_text.strip()) < 5:
+        return None
+
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json"
@@ -50,7 +53,7 @@ def generate_ai_reply(prompt_text):
         "1. Keep your reply to 1 concise, direct, and empathetic human sentence reacting to what the author wrote.\n"
         "2. NEVER use generic bot phrases like 'I completely agree', 'Great perspective', 'Thank you for sharing', or rigid corporate language.\n"
         "3. Do NOT mention Gaza or donations in your direct response text (a separate system handles that dynamically).\n"
-        "4. If the post is pure spam, automated code, or total nonsense, respond ONLY with the exact word: SKIP"
+        "4. If the post is empty, automated code, pure media links without text, or total nonsense, respond ONLY with the exact word: SKIP"
     )
 
     payload = {
@@ -65,7 +68,10 @@ def generate_ai_reply(prompt_text):
         response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=15)
         if response.status_code == 200:
             res_text = response.json()["choices"][0]["message"]["content"].strip()
-            if "SKIP" in res_text or len(res_text) < 5:
+            
+            # إذا طلب الذكاء الاصطناعي التخطي أو كان الرد قصيراً جداً
+            if "SKIP" in res_text or "can't react" in res_text.lower() or len(res_text) < 5:
+                print("DeepSeek suggested SKIPPING this post.")
                 return None
             
             # دمج الرد مع صيغة CTA عشوائية
@@ -171,7 +177,20 @@ async def main():
         except TypeError:
             content = event.content
 
-        if is_spam(content):
+        # 🛑 [تعديل هام]: تنظيف النص وفحص الطول لمنع المنشورات الفارغة أو روابط الصور
+        clean_content = content.strip() if content else ""
+        
+        # استبعاد المنشورات الفارغة أو التي تقل عن 6 أحرف
+        if not clean_content or len(clean_content) < 6:
+            print("Skipping empty or too-short post.")
+            continue
+
+        # استبعاد المنشورات التي تحتوي فقط على رابط صورة/ميديا بدون نص وصفي
+        if re.match(r'^https?://\S+\.(jpg|jpeg|png|gif|mp4|webm)$', clean_content, re.IGNORECASE):
+            print("Skipping media-only post.")
+            continue
+
+        if is_spam(clean_content):
             continue
 
         try:
@@ -192,7 +211,7 @@ async def main():
 
         print(f"[{replies_count + 1}/{MAX_REPLIES}] Processing post from {author_hex[:8]}...")
         
-        reply_text = generate_ai_reply(content)
+        reply_text = generate_ai_reply(clean_content)
         if reply_text:
             tags = [Tag.event(event_id), Tag.public_key(author_pk)]
             
