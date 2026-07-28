@@ -3,9 +3,9 @@ name: Nostr Gaza Bot Runner
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 */8 * * *' # يعمل تلقائياً كل 8 ساعات فقط (3 مرات باليوم)
+    - cron: '*/30 * * * *' # 👈 يعمل كل 30 دقيقة طوال اليوم (يفحص، يرد، ثم يستريح)
 
-# 🛑 منع تداخل التشغيلات: مستحيل يشتغل مرتين بنفس الوقت
+# 🛑 منع تداخل التشغيلات
 concurrency:
   group: nostr-bot-group
   cancel-in-progress: true
@@ -13,7 +13,7 @@ concurrency:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 15 # 🛑 حد أقصى 15 دقيقة لحماية دقائق GitHub المجانية
+    timeout-minutes: 10 # حد أقصى 10 دقائق لتنفيذ الدورة
 
     steps:
       - name: Checkout code
