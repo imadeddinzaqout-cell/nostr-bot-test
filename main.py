@@ -16,6 +16,26 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 # تقليل عدد الردود إلى 3 فقط لكل تشغيلة لضمان تصرف إنساني طبيعي
 MAX_REPLIES = 3
 
+def is_clean_english(text):
+    """حظر اليابانية والصينية واللغات الآسيوية/غير الإنجليزية تماماً"""
+    if not text:
+        return False
+        
+    # 1. كشف الحروف اليابانية، الصينية، والكورية (CJK)
+    cjk_pattern = re.compile(
+        r'[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uffef\u4e00-\u9faf\uac00-\ud7af]'
+    )
+    if cjk_pattern.search(text):
+        return False
+        
+    # 2. التأكد من أن غالبية النص حروف إنجليزية ولاتينية قياسية
+    latin_chars = len(re.findall(r'[a-zA-Z0-9\s.,!?\'"\-]', text))
+    total_chars = len(text)
+    if total_chars > 0 and (latin_chars / total_chars) < 0.65:
+        return False
+        
+    return True
+
 def contains_video(text):
     """فحص ما إذا كان المنشور يحتوي على فيديو بأي شكل من الأشكال"""
     text_lower = text.lower()
@@ -42,7 +62,7 @@ def is_spam(text):
     if url_count >= 2:
         return True
         
-    for kw in ["solana", "trycloudflare", "kill-fee", "moneymaker", "airdrop", "presale"]:
+    for kw in ["solana", "trycloudflare", "kill-fee", "moneymaker", "airdrop", "presale", "telegram"]:
         if kw in text_lower:
             return True
             
@@ -60,10 +80,11 @@ def generate_ai_reply(prompt_text):
     system_instruction = (
         "You are Imad, a genuine human user on Nostr reacting naturally to posts.\n\n"
         "RULES:\n"
-        "1. Keep your reply to 1 concise, direct, and empathetic human sentence reacting strictly to what the author wrote.\n"
-        "2. NEVER use generic bot phrases like 'I completely agree', 'Great perspective', 'Thank you for sharing', or rigid corporate language.\n"
-        "3. NEVER mention Gaza, donations, or pinned posts in your reply text. Just be a normal, friendly community member.\n"
-        "4. If the post is empty, automated code, pure media links without text, or total nonsense, respond ONLY with the exact word: SKIP"
+        "1. MUST respond ONLY in natural English. NEVER use Japanese, Chinese, or any non-English scripts.\n"
+        "2. Keep your reply to 1 concise, direct, and empathetic human sentence reacting strictly to what the author wrote.\n"
+        "3. NEVER use generic bot phrases like 'I completely agree', 'Great perspective', 'Thank you for sharing', or rigid corporate language.\n"
+        "4. NEVER mention Gaza, donations, or pinned posts in your reply text. Just be a normal, friendly community member.\n"
+        "5. If the post is non-English, empty, automated code, pure media links without text, or total nonsense, respond ONLY with the exact word: SKIP"
     )
 
     payload = {
@@ -83,7 +104,11 @@ def generate_ai_reply(prompt_text):
                 print("DeepSeek suggested SKIPPING this post.")
                 return None
             
-            # إرجاع الرد البشري الخالص دون إضافة أي رابط أو دعوة مكررة
+            # التأكد مجدداً أن الرد المولد من الذكاء الاصطناعي لا يحتوي على يابانية أو صينية
+            if not is_clean_english(res_text):
+                print("Skipping generated reply because it contained non-English characters.")
+                return None
+
             return res_text
     except Exception as e:
         print(f"Error calling DeepSeek API: {e}")
@@ -157,18 +182,18 @@ async def main():
 
     bot_hex = bot_pk.to_hex().lower() if bot_pk else ""
 
-    # 2️⃣ جلب تاريخ آخر 300 رد لمنع التكرار تماماً
+    # 2️⃣ جلب تاريخ آخر 500 رد لمنع التكرار الصارم للأشخاص والمنشورات
     already_replied_events = set()
     already_replied_authors = set()
 
     if bot_pk:
-        print("Fetching recent reply history from Nostr relays...")
-        history_filter = Filter().author(bot_pk).kind(Kind(1)).limit(300)
+        print("Fetching recent reply history from Nostr relays (up to 500 events)...")
+        history_filter = Filter().author(bot_pk).kind(Kind(1)).limit(500)
         try:
-            history_obj = await client.fetch_events(history_filter, timedelta(seconds=10))
+            history_obj = await client.fetch_events(history_filter, timedelta(seconds=12))
         except Exception:
             try:
-                history_obj = await client.fetch_events(history_filter, 10)
+                history_obj = await client.fetch_events(history_filter, 12)
             except Exception:
                 history_obj = []
 
@@ -188,17 +213,19 @@ async def main():
                 for t in tags_iter:
                     vec = t.as_vec() if hasattr(t, "as_vec") else list(t)
                     if len(vec) >= 2:
-                        if vec[0] == 'e':
-                            already_replied_events.add(vec[1].lower())
-                        elif vec[0] == 'p':
-                            already_replied_authors.add(vec[1].lower())
+                        tag_type = str(vec[0]).lower()
+                        tag_val = str(vec[1]).lower()
+                        if tag_type == 'e':
+                            already_replied_events.add(tag_val)
+                        elif tag_type == 'p':
+                            already_replied_authors.add(tag_val)
             except Exception:
                 pass
 
         print(f"Loaded {len(already_replied_events)} replied posts and {len(already_replied_authors)} unique authors from history.")
 
     # 3️⃣ جلب أحدث المنشورات
-    f = Filter().kind(Kind(1)).limit(60)
+    f = Filter().kind(Kind(1)).limit(80)
     
     try:
         events_obj = await client.fetch_events(f, timedelta(seconds=10))
@@ -223,11 +250,11 @@ async def main():
         print("No events found.")
         return
 
-    # 🔀 خلط القائمة عشوائياً لعدم معالجة المنشورات بنفس الترتيب في كل مرة
+    # 🔀 خلط القائمة عشوائياً لعدم معالجة المنشورات بنفس الترتيب
     random.shuffle(events_list)
 
     replies_count = 0
-    processed_authors = set()
+    session_authors = set()
 
     for event in events_list:
         if replies_count >= MAX_REPLIES:
@@ -257,9 +284,9 @@ async def main():
             print(f"Skipping post {event_id_hex[:8]} (Already replied).")
             continue
 
-        # 🛑 فحص 3: استبعاد صاحب المنشور إن تم التفاعل معه سابقاً
-        if author_hex in processed_authors or author_hex in already_replied_authors:
-            print(f"Skipping author {author_hex[:8]} (Already interacted with this author).")
+        # 🛑 فحص 3 صارم: استبعاد صاحب المنشور إن تم التفاعل معه في التاريخ أو في الجلسة الحالية
+        if author_hex in session_authors or author_hex in already_replied_authors:
+            print(f"STRICT SKIP: Author {author_hex[:8]} was already interacted with.")
             continue
 
         try:
@@ -269,15 +296,20 @@ async def main():
 
         clean_content = content.strip() if content else ""
         
-        if not clean_content or len(clean_content) < 6:
+        if not clean_content or len(clean_content) < 8:
             continue
 
-        # 🛑 فحص 4: استبعاد الفيديوهات
+        # 🛑 فحص 4: حظر المنشورات غير الإنجليزية (اليابانية/الصينية/إلخ)
+        if not is_clean_english(clean_content):
+            print(f"Skipping post {event_id_hex[:8]} (Non-English or CJK characters detected).")
+            continue
+
+        # 🛑 فحص 5: استبعاد الفيديوهات
         if contains_video(clean_content):
             print(f"Skipping post {event_id_hex[:8]} (Contains video).")
             continue
 
-        # فحص السبام
+        # 🛑 فحص 6: فحص السبام
         if is_spam(clean_content):
             continue
 
@@ -297,9 +329,12 @@ async def main():
 
             await client.send_event_builder(builder)
             replies_count += 1
-            processed_authors.add(author_hex)
-            already_replied_events.add(event_id_hex)
+            
+            # تسجيل صاحب المنشور في جميع القوائم فوراً لمنع التكرار نهائياً
+            session_authors.add(author_hex)
             already_replied_authors.add(author_hex)
+            already_replied_events.add(event_id_hex)
+            
             print(f"Successfully posted reply #{replies_count}: {reply_text}")
 
             if replies_count < MAX_REPLIES:
