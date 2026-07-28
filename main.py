@@ -13,8 +13,8 @@ from nostr_sdk import (
 NOSTR_SECRET = os.getenv("NOSTR_NSEC", "").strip()
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 
-# رفع الحد الأقصى إلى 10 ردود في التشغيلة الواحدة
-MAX_REPLIES = 10
+# رفع الحد الأقصى إلى 18 رداً في التشغيلة للوصول لـ 2,500+ رد يومياً
+MAX_REPLIES = 18
 
 # تنويع عبارات الدعوة (CTA) لضمان الحركة البشرية الطبيعية
 CTA_VARIANTS = [
@@ -229,8 +229,8 @@ async def main():
 
         print(f"Loaded {len(already_replied_events)} replied posts and {len(already_replied_authors)} unique authors from history.")
 
-    # جلب أحدث المنشورات
-    f = Filter().kind(Kind(1)).limit(120)
+    # جلب أحدث 200 منشور لضمان خيارات كافية بعد الفلترة
+    f = Filter().kind(Kind(1)).limit(200)
     
     try:
         events_obj = await client.fetch_events(f, timedelta(seconds=10))
