@@ -13,11 +13,8 @@ from nostr_sdk import (
 NOSTR_SECRET = os.getenv("NOSTR_NSEC", "").strip()
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 
-# عدد الردود في الدفعة الواحدة
-MAX_REPLIES_PER_BATCH = 4
-
-# زمن الانتظار بين الدفعات بالثواني (300 ثانية = 5 دقائق)
-BATCH_PAUSE_SECONDS = 300
+# عدد الردود في التشغيلة الواحدة (سريعة وممتازة)
+MAX_REPLIES = 5
 
 # قائمة صيغ متنوعة للمنشور المثبت (تظهر بنسبة ~40%)
 CTA_TEMPLATES = [
@@ -179,9 +176,9 @@ async def main():
     await client.connect()
     print("Successfully connected to Nostr Relays!")
 
-    # جلب هوية البوت
+    # جلب هوية البوت (تم تصحيح استدعاء الدالة لتفادي الـ Warning)
     try:
-        bot_pk = await client.signer().public_key()
+        bot_pk = await signer.public_key()
     except Exception:
         try:
             bot_pk = signer.public_key()
@@ -190,13 +187,12 @@ async def main():
 
     bot_hex = bot_pk.to_hex().lower() if bot_pk else ""
 
-    # ذاكرة طويلة الأجل طوال فترة تشغيل السكريبت لمنع التكرار
     already_replied_events = set()
     already_replied_authors = set()
 
-    # جلب السجل القديم أول مرة
+    # جلب السجل لمنع التكرار
     if bot_pk:
-        print("Fetching initial reply history from Nostr relays...")
+        print("Fetching recent reply history from Nostr relays...")
         history_filter = Filter().author(bot_pk).kind(Kind(1)).limit(500)
         try:
             history_obj = await client.fetch_events(history_filter, timedelta(seconds=12))
@@ -233,112 +229,109 @@ async def main():
 
         print(f"Loaded history: {len(already_replied_events)} posts, {len(already_replied_authors)} unique authors.")
 
-    # 🔄 الحلقة اللانهائية للعمل طوال اليوم
-    batch_index = 1
-    while True:
-        print(f"\n--- Starting Batch #{batch_index} ---")
-        
-        f = Filter().kind(Kind(1)).limit(80)
+    f = Filter().kind(Kind(1)).limit(100)
+    
+    try:
+        events_obj = await client.fetch_events(f, timedelta(seconds=10))
+    except Exception:
         try:
-            events_obj = await client.fetch_events(f, timedelta(seconds=10))
+            events_obj = await client.fetch_events(f, 10)
+        except Exception as e:
+            print(f"Error fetching events: {e}")
+            return
+
+    if hasattr(events_obj, "to_vec"):
+        events_list = events_obj.to_vec()
+    elif hasattr(events_obj, "to_list"):
+        events_list = events_obj.to_list()
+    else:
+        try:
+            events_list = list(events_obj)
         except Exception:
-            try:
-                events_obj = await client.fetch_events(f, 10)
-            except Exception as e:
-                print(f"Error fetching events: {e}")
-                events_obj = []
+            events_list = []
 
-        if hasattr(events_obj, "to_vec"):
-            events_list = events_obj.to_vec()
-        elif hasattr(events_obj, "to_list"):
-            events_list = events_obj.to_list()
-        else:
+    if not events_list:
+        print("No events found.")
+        return
+
+    random.shuffle(events_list)
+
+    replies_count = 0
+    session_authors = set()
+
+    for event in events_list:
+        if replies_count >= MAX_REPLIES:
+            print(f"Reached limit of {MAX_REPLIES} replies. Finishing run.")
+            break
+
+        try:
+            event_id_obj = event.id()
+        except TypeError:
+            event_id_obj = event.id
+
+        event_id_hex = (event_id_obj.to_hex() if hasattr(event_id_obj, "to_hex") else str(event_id_obj)).lower()
+
+        try:
+            author_hex = event.author().to_hex().lower()
+            author_pk = event.author()
+        except TypeError:
+            author_hex = event.author.to_hex().lower()
+            author_pk = event.author
+
+        # الفلاتر الصارمة
+        if bot_hex and author_hex == bot_hex:
+            continue
+        if event_id_hex in already_replied_events:
+            continue
+        if author_hex in session_authors or author_hex in already_replied_authors:
+            continue
+
+        try:
+            content = event.content()
+        except TypeError:
+            content = event.content
+
+        clean_content = content.strip() if content else ""
+        
+        if not clean_content or len(clean_content) < 8:
+            continue
+        if not is_clean_english(clean_content):
+            continue
+        if contains_video(clean_content) or is_spam(clean_content):
+            continue
+
+        print(f"[{replies_count + 1}/{MAX_REPLIES}] Replying to {author_hex[:8]}...")
+        
+        reply_text = generate_ai_reply(clean_content)
+        if reply_text:
+            if random.random() < 0.40:
+                cta_choice = random.choice(CTA_TEMPLATES)
+                reply_text += cta_choice
+
+            tags = [Tag.event(event_id_obj), Tag.public_key(author_pk)]
+            
             try:
-                events_list = list(events_obj)
+                builder = EventBuilder.text_note(reply_text).tags(tags)
             except Exception:
-                events_list = []
-
-        if events_list:
-            random.shuffle(events_list)
-            replies_in_batch = 0
-
-            for event in events_list:
-                if replies_in_batch >= MAX_REPLIES_PER_BATCH:
-                    break
-
                 try:
-                    event_id_obj = event.id()
-                except TypeError:
-                    event_id_obj = event.id
+                    builder = EventBuilder.text_note(reply_text)
+                except Exception:
+                    builder = EventBuilder(Kind(1), reply_text, tags)
 
-                event_id_hex = (event_id_obj.to_hex() if hasattr(event_id_obj, "to_hex") else str(event_id_obj)).lower()
+            await client.send_event_builder(builder)
+            replies_count += 1
+            
+            session_authors.add(author_hex)
+            already_replied_authors.add(author_hex)
+            already_replied_events.add(event_id_hex)
+            
+            print(f"Successfully posted: {reply_text}")
 
-                try:
-                    author_hex = event.author().to_hex().lower()
-                    author_pk = event.author()
-                except TypeError:
-                    author_hex = event.author.to_hex().lower()
-                    author_pk = event.author
+            if replies_count < MAX_REPLIES:
+                sleep_time = random.randint(8, 15)
+                await asyncio.sleep(sleep_time)
 
-                # الفلاتر
-                if bot_hex and author_hex == bot_hex:
-                    continue
-                if event_id_hex in already_replied_events:
-                    continue
-                if author_hex in already_replied_authors:
-                    continue
-
-                try:
-                    content = event.content()
-                except TypeError:
-                    content = event.content
-
-                clean_content = content.strip() if content else ""
-                
-                if not clean_content or len(clean_content) < 8:
-                    continue
-                if not is_clean_english(clean_content):
-                    continue
-                if contains_video(clean_content) or is_spam(clean_content):
-                    continue
-
-                print(f"[{replies_in_batch + 1}/{MAX_REPLIES_PER_BATCH}] Replying to {author_hex[:8]}...")
-                
-                reply_text = generate_ai_reply(clean_content)
-                if reply_text:
-                    if random.random() < 0.40:
-                        cta_choice = random.choice(CTA_TEMPLATES)
-                        reply_text += cta_choice
-
-                    tags = [Tag.event(event_id_obj), Tag.public_key(author_pk)]
-                    
-                    try:
-                        builder = EventBuilder.text_note(reply_text).tags(tags)
-                    except Exception:
-                        try:
-                            builder = EventBuilder.text_note(reply_text)
-                        except Exception:
-                            builder = EventBuilder(Kind(1), reply_text, tags)
-
-                    await client.send_event_builder(builder)
-                    replies_in_batch += 1
-                    
-                    already_replied_authors.add(author_hex)
-                    already_replied_events.add(event_id_hex)
-                    
-                    print(f"Successfully posted: {reply_text}")
-
-                    if replies_in_batch < MAX_REPLIES_PER_BATCH:
-                        sleep_time = random.randint(8, 15)
-                        await asyncio.sleep(sleep_time)
-
-            print(f"Batch #{batch_index} complete. Posted {replies_in_batch} replies.")
-        else:
-            print("No events fetched in this cycle.")
-
-        batch_index += 1
-        print(f"Sleeping for {BATCH_PAUSE_SECONDS // 60} minutes before next batch...")
-        await asyncio.sleep(BATCH_PAUSE_SECONDS)
+    print(f"Finished! Posted {replies_count} replies successfully.")
 
 if __name__ == "__main__":
     asyncio.run(main())
