@@ -1,14 +1,14 @@
 name: Nostr Gaza Bot Runner
 
-# 🛑 1. منع تشغيل أكثر من نسخة واحدة في نفس الوقت تماماً
 concurrency:
   group: nostr-bot-single-instance
   cancel-in-progress: false
 
 on:
-  workflow_dispatch: # للتشغيل اليدوي وقتما تشاء
+  workflow_dispatch:
   schedule:
-    - cron: '*/30 * * * *' # 2. تشغيل متزن كل 30 دقيقة (تبدو حركة بشرية طبيعية)
+    # تشغيل كل 10 دقائق لتنفيذ 144 تشغيلة يومياً
+    - cron: '*/10 * * * *'
 
 jobs:
   run-bot:
@@ -32,7 +32,6 @@ jobs:
       - name: Execute Nostr Bot
         env:
           NOSTR_NSEC: ${{ secrets.NOSTR_NSEC }}
-          NOSTR_PRIVATE_KEY: ${{ secrets.NOSTR_PRIVATE_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
           python main.py
