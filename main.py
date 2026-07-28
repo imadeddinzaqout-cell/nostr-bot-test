@@ -13,26 +13,17 @@ from nostr_sdk import (
 NOSTR_SECRET = os.getenv("NOSTR_NSEC", "").strip()
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 
-MAX_REPLIES = 10  # الحد الأقصى: 10 ردود فقط لكل تشغيلة
-
-# تنويع عبارات الدعوة (CTA) لضمان عدم التكرار وتبدو حركة بشرية
-CTA_VARIANTS = [
-    "\n\n(Btw, check my pinned post if you'd like to support my family in Gaza 🙏)",
-    "\n\n(Feel free to take a look at my pinned post for our story in Gaza.)",
-    "\n\n(Shared more about my family's situation in Gaza on my pinned post if you have a sec.)",
-    "",  # في بعض الأحيان بدون أي دعوة لتبدو المشاركة طبيعية 100%
-]
+# تقليل عدد الردود إلى 3 فقط لكل تشغيلة لضمان تصرف إنساني طبيعي
+MAX_REPLIES = 3
 
 def contains_video(text):
     """فحص ما إذا كان المنشور يحتوي على فيديو بأي شكل من الأشكال"""
     text_lower = text.lower()
     
-    # 1. فحص امتدادات ملفات الفيديو
     video_extensions = r'\.(mp4|m3u8|mov|webm|avi|mkv|flv|wmv)(\?|\s|$)'
     if re.search(video_extensions, text_lower):
         return True
         
-    # 2. فحص روابط منصات ومواقع الفيديوهات الشهيرة
     video_domains = [
         "youtube.com", "youtu.be", "vimeo.com", "tiktok.com",
         "rumble.com", "bitchute.com", "nostr.build/av/", "video/", "video"
@@ -69,9 +60,9 @@ def generate_ai_reply(prompt_text):
     system_instruction = (
         "You are Imad, a genuine human user on Nostr reacting naturally to posts.\n\n"
         "RULES:\n"
-        "1. Keep your reply to 1 concise, direct, and empathetic human sentence reacting to what the author wrote.\n"
+        "1. Keep your reply to 1 concise, direct, and empathetic human sentence reacting strictly to what the author wrote.\n"
         "2. NEVER use generic bot phrases like 'I completely agree', 'Great perspective', 'Thank you for sharing', or rigid corporate language.\n"
-        "3. Do NOT mention Gaza or donations in your direct response text (a separate system handles that dynamically).\n"
+        "3. NEVER mention Gaza, donations, or pinned posts in your reply text. Just be a normal, friendly community member.\n"
         "4. If the post is empty, automated code, pure media links without text, or total nonsense, respond ONLY with the exact word: SKIP"
     )
 
@@ -92,8 +83,8 @@ def generate_ai_reply(prompt_text):
                 print("DeepSeek suggested SKIPPING this post.")
                 return None
             
-            selected_cta = random.choice(CTA_VARIANTS)
-            return f"{res_text}{selected_cta}"
+            # إرجاع الرد البشري الخالص دون إضافة أي رابط أو دعوة مكررة
+            return res_text
     except Exception as e:
         print(f"Error calling DeepSeek API: {e}")
     return None
@@ -155,7 +146,7 @@ async def main():
     await client.connect()
     print("Successfully connected to Nostr Relays!")
 
-    # 1️⃣ جلب هوية البوت الخاصة لمنع الرد على نفسك
+    # 1️⃣ جلب هوية البوت لمنع الرد على نفسك
     try:
         bot_pk = await client.signer().public_key()
     except Exception:
@@ -164,15 +155,15 @@ async def main():
         except Exception:
             bot_pk = None
 
-    bot_hex = bot_pk.to_hex() if bot_pk else ""
+    bot_hex = bot_pk.to_hex().lower() if bot_pk else ""
 
-    # 2️⃣ جلب تاريخ آخر 200 رد قام بها الحساب لمنع التكرار تماماً
+    # 2️⃣ جلب تاريخ آخر 300 رد لمنع التكرار تماماً
     already_replied_events = set()
     already_replied_authors = set()
 
     if bot_pk:
-        print("Fetching recent reply history from Nostr relays to prevent duplicates...")
-        history_filter = Filter().author(bot_pk).kind(Kind(1)).limit(200)
+        print("Fetching recent reply history from Nostr relays...")
+        history_filter = Filter().author(bot_pk).kind(Kind(1)).limit(300)
         try:
             history_obj = await client.fetch_events(history_filter, timedelta(seconds=10))
         except Exception:
@@ -198,16 +189,16 @@ async def main():
                     vec = t.as_vec() if hasattr(t, "as_vec") else list(t)
                     if len(vec) >= 2:
                         if vec[0] == 'e':
-                            already_replied_events.add(vec[1])
+                            already_replied_events.add(vec[1].lower())
                         elif vec[0] == 'p':
-                            already_replied_authors.add(vec[1])
+                            already_replied_authors.add(vec[1].lower())
             except Exception:
                 pass
 
-        print(f"Loaded {len(already_replied_events)} previously replied posts and {len(already_replied_authors)} previous authors.")
+        print(f"Loaded {len(already_replied_events)} replied posts and {len(already_replied_authors)} unique authors from history.")
 
-    # 3️⃣ جلب أحدث المنشورات للرد عليها
-    f = Filter().kind(Kind(1)).limit(50)
+    # 3️⃣ جلب أحدث المنشورات
+    f = Filter().kind(Kind(1)).limit(60)
     
     try:
         events_obj = await client.fetch_events(f, timedelta(seconds=10))
@@ -232,12 +223,15 @@ async def main():
         print("No events found.")
         return
 
+    # 🔀 خلط القائمة عشوائياً لعدم معالجة المنشورات بنفس الترتيب في كل مرة
+    random.shuffle(events_list)
+
     replies_count = 0
     processed_authors = set()
 
     for event in events_list:
         if replies_count >= MAX_REPLIES:
-            print(f"Reached limit of {MAX_REPLIES} replies. Stopping execution.")
+            print(f"Reached limit of {MAX_REPLIES} replies. Stopping run.")
             break
 
         try:
@@ -245,27 +239,27 @@ async def main():
         except TypeError:
             event_id_obj = event.id
 
-        event_id_hex = event_id_obj.to_hex() if hasattr(event_id_obj, "to_hex") else str(event_id_obj)
+        event_id_hex = (event_id_obj.to_hex() if hasattr(event_id_obj, "to_hex") else str(event_id_obj)).lower()
 
         try:
-            author_hex = event.author().to_hex()
+            author_hex = event.author().to_hex().lower()
             author_pk = event.author()
         except TypeError:
-            author_hex = event.author.to_hex()
+            author_hex = event.author.to_hex().lower()
             author_pk = event.author
 
-        # 🛑 فحص 1: منع الرد على حسابك أنت
+        # 🛑 فحص 1: منع الرد على حسابك
         if bot_hex and author_hex == bot_hex:
             continue
 
-        # 🛑 فحص 2: استبعاد المنشور إذا تم الرد عليه سابقاً في أي تشغيلة
+        # 🛑 فحص 2: استبعاد المنشور إن تم الرد عليه سابقاً
         if event_id_hex in already_replied_events:
-            print(f"Skipping post {event_id_hex[:8]} (Already replied to previously).")
+            print(f"Skipping post {event_id_hex[:8]} (Already replied).")
             continue
 
-        # 🛑 فحص 3: استبعاد صاحب المنشور إذا تم الرد عليه حديثاً
+        # 🛑 فحص 3: استبعاد صاحب المنشور إن تم التفاعل معه سابقاً
         if author_hex in processed_authors or author_hex in already_replied_authors:
-            print(f"Skipping author {author_hex[:8]} (Already interacted with recently).")
+            print(f"Skipping author {author_hex[:8]} (Already interacted with this author).")
             continue
 
         try:
@@ -278,12 +272,12 @@ async def main():
         if not clean_content or len(clean_content) < 6:
             continue
 
-        # 🛑 فحص 4: التجاهل التام لأي منشور يحتوي على فيديو
+        # 🛑 فحص 4: استبعاد الفيديوهات
         if contains_video(clean_content):
             print(f"Skipping post {event_id_hex[:8]} (Contains video).")
             continue
 
-        # فحص السبام والإعلانات
+        # فحص السبام
         if is_spam(clean_content):
             continue
 
@@ -305,14 +299,16 @@ async def main():
             replies_count += 1
             processed_authors.add(author_hex)
             already_replied_events.add(event_id_hex)
+            already_replied_authors.add(author_hex)
             print(f"Successfully posted reply #{replies_count}: {reply_text}")
 
             if replies_count < MAX_REPLIES:
-                sleep_time = random.randint(5, 15)
-                print(f"Waiting {sleep_time} seconds before next reply...")
+                # ⏱️ وقت الانتظار البشري: من 45 إلى 120 ثانية بين كل رد
+                sleep_time = random.randint(45, 120)
+                print(f"Waiting {sleep_time} seconds before next reply to maintain human pacing...")
                 await asyncio.sleep(sleep_time)
 
-    print(f"Finished! Posted {replies_count} new unique replies in this run.")
+    print(f"Finished! Posted {replies_count} organic replies in this run.")
 
 if __name__ == "__main__":
     asyncio.run(main())
