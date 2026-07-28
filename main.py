@@ -13,22 +13,31 @@ from nostr_sdk import (
 NOSTR_SECRET = os.getenv("NOSTR_NSEC", "").strip()
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 
-# تقليل عدد الردود إلى 3 فقط لكل تشغيلة لضمان تصرف إنساني طبيعي
-MAX_REPLIES = 3
+# عدد الردود في الدفعة الواحدة
+MAX_REPLIES_PER_BATCH = 4
+
+# زمن الانتظار بين الدفعات بالثواني (300 ثانية = 5 دقائق)
+BATCH_PAUSE_SECONDS = 300
+
+# قائمة صيغ متنوعة للمنشور المثبت (تظهر بنسبة ~40%)
+CTA_TEMPLATES = [
+    "\n\n(If you have a moment, feel free to check my pinned post for our story in Gaza 🙏)",
+    "\n\n(Btw, I shared our family's campaign in my pinned note if you'd like to take a look ❤️)",
+    "\n\n(Feel free to check my pinned post if you wish to support my family in Gaza 🙏)",
+    "\n\n(Take a quick look at my pinned note if you'd like to read our story in Gaza ❤️)"
+]
 
 def is_clean_english(text):
     """حظر اليابانية والصينية واللغات الآسيوية/غير الإنجليزية تماماً"""
     if not text:
         return False
         
-    # 1. كشف الحروف اليابانية، الصينية، والكورية (CJK)
     cjk_pattern = re.compile(
         r'[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uffef\u4e00-\u9faf\uac00-\ud7af]'
     )
     if cjk_pattern.search(text):
         return False
         
-    # 2. التأكد من أن غالبية النص حروف إنجليزية ولاتينية قياسية
     latin_chars = len(re.findall(r'[a-zA-Z0-9\s.,!?\'"\-]', text))
     total_chars = len(text)
     if total_chars > 0 and (latin_chars / total_chars) < 0.65:
@@ -37,7 +46,7 @@ def is_clean_english(text):
     return True
 
 def contains_video(text):
-    """فحص ما إذا كان المنشور يحتوي على فيديو بأي شكل من الأشكال"""
+    """فحص ما إذا كان المنشور يحتوي على فيديو"""
     text_lower = text.lower()
     
     video_extensions = r'\.(mp4|m3u8|mov|webm|avi|mkv|flv|wmv)(\?|\s|$)'
@@ -55,7 +64,7 @@ def contains_video(text):
     return False
 
 def is_spam(text):
-    """فحص المنشورات لتجنب الرد على السبام وإعلانات الكريبتو البوتات"""
+    """فحص المنشورات لتجنب الرد على السبام وإعلانات الكريبتو"""
     text_lower = text.lower()
     
     url_count = len(re.findall(r'https?://\S+', text))
@@ -80,11 +89,11 @@ def generate_ai_reply(prompt_text):
     system_instruction = (
         "You are Imad, a genuine human user on Nostr reacting naturally to posts.\n\n"
         "RULES:\n"
-        "1. MUST respond ONLY in natural English. NEVER use Japanese, Chinese, or any non-English scripts.\n"
+        "1. MUST respond ONLY in natural English. NEVER use Japanese, Chinese, or non-English scripts.\n"
         "2. Keep your reply to 1 concise, direct, and empathetic human sentence reacting strictly to what the author wrote.\n"
-        "3. NEVER use generic bot phrases like 'I completely agree', 'Great perspective', 'Thank you for sharing', or rigid corporate language.\n"
-        "4. NEVER mention Gaza, donations, or pinned posts in your reply text. Just be a normal, friendly community member.\n"
-        "5. If the post is non-English, empty, automated code, pure media links without text, or total nonsense, respond ONLY with the exact word: SKIP"
+        "3. NEVER use generic bot phrases like 'I completely agree', 'Great perspective', 'Thank you for sharing'.\n"
+        "4. Do NOT include Gaza or donation links in the main text body.\n"
+        "5. If the post is non-English, empty, code, pure links, or total nonsense, respond ONLY with: SKIP"
     )
 
     payload = {
@@ -104,9 +113,8 @@ def generate_ai_reply(prompt_text):
                 print("DeepSeek suggested SKIPPING this post.")
                 return None
             
-            # التأكد مجدداً أن الرد المولد من الذكاء الاصطناعي لا يحتوي على يابانية أو صينية
             if not is_clean_english(res_text):
-                print("Skipping generated reply because it contained non-English characters.")
+                print("Skipping generated reply (Non-English characters detected).")
                 return None
 
             return res_text
@@ -171,7 +179,7 @@ async def main():
     await client.connect()
     print("Successfully connected to Nostr Relays!")
 
-    # 1️⃣ جلب هوية البوت لمنع الرد على نفسك
+    # جلب هوية البوت
     try:
         bot_pk = await client.signer().public_key()
     except Exception:
@@ -182,12 +190,13 @@ async def main():
 
     bot_hex = bot_pk.to_hex().lower() if bot_pk else ""
 
-    # 2️⃣ جلب تاريخ آخر 500 رد لمنع التكرار الصارم للأشخاص والمنشورات
+    # ذاكرة طويلة الأجل طوال فترة تشغيل السكريبت لمنع التكرار
     already_replied_events = set()
     already_replied_authors = set()
 
+    # جلب السجل القديم أول مرة
     if bot_pk:
-        print("Fetching recent reply history from Nostr relays (up to 500 events)...")
+        print("Fetching initial reply history from Nostr relays...")
         history_filter = Filter().author(bot_pk).kind(Kind(1)).limit(500)
         try:
             history_obj = await client.fetch_events(history_filter, timedelta(seconds=12))
@@ -222,128 +231,114 @@ async def main():
             except Exception:
                 pass
 
-        print(f"Loaded {len(already_replied_events)} replied posts and {len(already_replied_authors)} unique authors from history.")
+        print(f"Loaded history: {len(already_replied_events)} posts, {len(already_replied_authors)} unique authors.")
 
-    # 3️⃣ جلب أحدث المنشورات
-    f = Filter().kind(Kind(1)).limit(80)
-    
-    try:
-        events_obj = await client.fetch_events(f, timedelta(seconds=10))
-    except Exception:
+    # 🔄 الحلقة اللانهائية للعمل طوال اليوم
+    batch_index = 1
+    while True:
+        print(f"\n--- Starting Batch #{batch_index} ---")
+        
+        f = Filter().kind(Kind(1)).limit(80)
         try:
-            events_obj = await client.fetch_events(f, 10)
-        except Exception as e:
-            print(f"Error fetching events: {e}")
-            return
-
-    if hasattr(events_obj, "to_vec"):
-        events_list = events_obj.to_vec()
-    elif hasattr(events_obj, "to_list"):
-        events_list = events_obj.to_list()
-    else:
-        try:
-            events_list = list(events_obj)
+            events_obj = await client.fetch_events(f, timedelta(seconds=10))
         except Exception:
-            events_list = []
-
-    if not events_list:
-        print("No events found.")
-        return
-
-    # 🔀 خلط القائمة عشوائياً لعدم معالجة المنشورات بنفس الترتيب
-    random.shuffle(events_list)
-
-    replies_count = 0
-    session_authors = set()
-
-    for event in events_list:
-        if replies_count >= MAX_REPLIES:
-            print(f"Reached limit of {MAX_REPLIES} replies. Stopping run.")
-            break
-
-        try:
-            event_id_obj = event.id()
-        except TypeError:
-            event_id_obj = event.id
-
-        event_id_hex = (event_id_obj.to_hex() if hasattr(event_id_obj, "to_hex") else str(event_id_obj)).lower()
-
-        try:
-            author_hex = event.author().to_hex().lower()
-            author_pk = event.author()
-        except TypeError:
-            author_hex = event.author.to_hex().lower()
-            author_pk = event.author
-
-        # 🛑 فحص 1: منع الرد على حسابك
-        if bot_hex and author_hex == bot_hex:
-            continue
-
-        # 🛑 فحص 2: استبعاد المنشور إن تم الرد عليه سابقاً
-        if event_id_hex in already_replied_events:
-            print(f"Skipping post {event_id_hex[:8]} (Already replied).")
-            continue
-
-        # 🛑 فحص 3 صارم: استبعاد صاحب المنشور إن تم التفاعل معه في التاريخ أو في الجلسة الحالية
-        if author_hex in session_authors or author_hex in already_replied_authors:
-            print(f"STRICT SKIP: Author {author_hex[:8]} was already interacted with.")
-            continue
-
-        try:
-            content = event.content()
-        except TypeError:
-            content = event.content
-
-        clean_content = content.strip() if content else ""
-        
-        if not clean_content or len(clean_content) < 8:
-            continue
-
-        # 🛑 فحص 4: حظر المنشورات غير الإنجليزية (اليابانية/الصينية/إلخ)
-        if not is_clean_english(clean_content):
-            print(f"Skipping post {event_id_hex[:8]} (Non-English or CJK characters detected).")
-            continue
-
-        # 🛑 فحص 5: استبعاد الفيديوهات
-        if contains_video(clean_content):
-            print(f"Skipping post {event_id_hex[:8]} (Contains video).")
-            continue
-
-        # 🛑 فحص 6: فحص السبام
-        if is_spam(clean_content):
-            continue
-
-        print(f"[{replies_count + 1}/{MAX_REPLIES}] Processing post from {author_hex[:8]}...")
-        
-        reply_text = generate_ai_reply(clean_content)
-        if reply_text:
-            tags = [Tag.event(event_id_obj), Tag.public_key(author_pk)]
-            
             try:
-                builder = EventBuilder.text_note(reply_text).tags(tags)
+                events_obj = await client.fetch_events(f, 10)
+            except Exception as e:
+                print(f"Error fetching events: {e}")
+                events_obj = []
+
+        if hasattr(events_obj, "to_vec"):
+            events_list = events_obj.to_vec()
+        elif hasattr(events_obj, "to_list"):
+            events_list = events_obj.to_list()
+        else:
+            try:
+                events_list = list(events_obj)
             except Exception:
+                events_list = []
+
+        if events_list:
+            random.shuffle(events_list)
+            replies_in_batch = 0
+
+            for event in events_list:
+                if replies_in_batch >= MAX_REPLIES_PER_BATCH:
+                    break
+
                 try:
-                    builder = EventBuilder.text_note(reply_text)
-                except Exception:
-                    builder = EventBuilder(Kind(1), reply_text, tags)
+                    event_id_obj = event.id()
+                except TypeError:
+                    event_id_obj = event.id
 
-            await client.send_event_builder(builder)
-            replies_count += 1
-            
-            # تسجيل صاحب المنشور في جميع القوائم فوراً لمنع التكرار نهائياً
-            session_authors.add(author_hex)
-            already_replied_authors.add(author_hex)
-            already_replied_events.add(event_id_hex)
-            
-            print(f"Successfully posted reply #{replies_count}: {reply_text}")
+                event_id_hex = (event_id_obj.to_hex() if hasattr(event_id_obj, "to_hex") else str(event_id_obj)).lower()
 
-            if replies_count < MAX_REPLIES:
-                # ⏱️ وقت الانتظار البشري: من 45 إلى 120 ثانية بين كل رد
-                sleep_time = random.randint(45, 120)
-                print(f"Waiting {sleep_time} seconds before next reply to maintain human pacing...")
-                await asyncio.sleep(sleep_time)
+                try:
+                    author_hex = event.author().to_hex().lower()
+                    author_pk = event.author()
+                except TypeError:
+                    author_hex = event.author.to_hex().lower()
+                    author_pk = event.author
 
-    print(f"Finished! Posted {replies_count} organic replies in this run.")
+                # الفلاتر
+                if bot_hex and author_hex == bot_hex:
+                    continue
+                if event_id_hex in already_replied_events:
+                    continue
+                if author_hex in already_replied_authors:
+                    continue
+
+                try:
+                    content = event.content()
+                except TypeError:
+                    content = event.content
+
+                clean_content = content.strip() if content else ""
+                
+                if not clean_content or len(clean_content) < 8:
+                    continue
+                if not is_clean_english(clean_content):
+                    continue
+                if contains_video(clean_content) or is_spam(clean_content):
+                    continue
+
+                print(f"[{replies_in_batch + 1}/{MAX_REPLIES_PER_BATCH}] Replying to {author_hex[:8]}...")
+                
+                reply_text = generate_ai_reply(clean_content)
+                if reply_text:
+                    if random.random() < 0.40:
+                        cta_choice = random.choice(CTA_TEMPLATES)
+                        reply_text += cta_choice
+
+                    tags = [Tag.event(event_id_obj), Tag.public_key(author_pk)]
+                    
+                    try:
+                        builder = EventBuilder.text_note(reply_text).tags(tags)
+                    except Exception:
+                        try:
+                            builder = EventBuilder.text_note(reply_text)
+                        except Exception:
+                            builder = EventBuilder(Kind(1), reply_text, tags)
+
+                    await client.send_event_builder(builder)
+                    replies_in_batch += 1
+                    
+                    already_replied_authors.add(author_hex)
+                    already_replied_events.add(event_id_hex)
+                    
+                    print(f"Successfully posted: {reply_text}")
+
+                    if replies_in_batch < MAX_REPLIES_PER_BATCH:
+                        sleep_time = random.randint(8, 15)
+                        await asyncio.sleep(sleep_time)
+
+            print(f"Batch #{batch_index} complete. Posted {replies_in_batch} replies.")
+        else:
+            print("No events fetched in this cycle.")
+
+        batch_index += 1
+        print(f"Sleeping for {BATCH_PAUSE_SECONDS // 60} minutes before next batch...")
+        await asyncio.sleep(BATCH_PAUSE_SECONDS)
 
 if __name__ == "__main__":
     asyncio.run(main())
