@@ -13,11 +13,11 @@ from nostr_sdk import (
 NOSTR_SECRET = os.getenv("NOSTR_NSEC", "").strip()
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 
-# عدد الردود في التشغيلة الواحدة (سريعة وممتازة)
-MAX_REPLIES = 5
+# رفع الحد الأقصى إلى 10 ردود في التشغيلة الواحدة
+MAX_REPLIES = 10
 
-# قائمة صيغ متنوعة للمنشور المثبت (تظهر بنسبة ~40%)
-CTA_TEMPLATES = [
+# تنويع عبارات الدعوة (CTA) لضمان الحركة البشرية الطبيعية
+CTA_VARIANTS = [
     "\n\n(If you have a moment, feel free to check my pinned post for our story in Gaza 🙏)",
     "\n\n(Btw, I shared our family's campaign in my pinned note if you'd like to take a look ❤️)",
     "\n\n(Feel free to check my pinned post if you wish to support my family in Gaza 🙏)",
@@ -89,8 +89,8 @@ def generate_ai_reply(prompt_text):
         "1. MUST respond ONLY in natural English. NEVER use Japanese, Chinese, or non-English scripts.\n"
         "2. Keep your reply to 1 concise, direct, and empathetic human sentence reacting strictly to what the author wrote.\n"
         "3. NEVER use generic bot phrases like 'I completely agree', 'Great perspective', 'Thank you for sharing'.\n"
-        "4. Do NOT include Gaza or donation links in the main text body.\n"
-        "5. If the post is non-English, empty, code, pure links, or total nonsense, respond ONLY with: SKIP"
+        "4. Do NOT mention Gaza or donation links in your main response text.\n"
+        "5. If the post is non-English, empty, automated code, pure media links without text, or total nonsense, respond ONLY with: SKIP"
     )
 
     payload = {
@@ -176,7 +176,7 @@ async def main():
     await client.connect()
     print("Successfully connected to Nostr Relays!")
 
-    # جلب هوية البوت (تم تصحيح استدعاء الدالة لتفادي الـ Warning)
+    # جلب هوية البوت
     try:
         bot_pk = await signer.public_key()
     except Exception:
@@ -187,10 +187,10 @@ async def main():
 
     bot_hex = bot_pk.to_hex().lower() if bot_pk else ""
 
+    # جلب تاريخ أحدث 500 رد لمنع التكرار تماماً
     already_replied_events = set()
     already_replied_authors = set()
 
-    # جلب السجل لمنع التكرار
     if bot_pk:
         print("Fetching recent reply history from Nostr relays...")
         history_filter = Filter().author(bot_pk).kind(Kind(1)).limit(500)
@@ -227,9 +227,10 @@ async def main():
             except Exception:
                 pass
 
-        print(f"Loaded history: {len(already_replied_events)} posts, {len(already_replied_authors)} unique authors.")
+        print(f"Loaded {len(already_replied_events)} replied posts and {len(already_replied_authors)} unique authors from history.")
 
-    f = Filter().kind(Kind(1)).limit(100)
+    # جلب أحدث المنشورات
+    f = Filter().kind(Kind(1)).limit(120)
     
     try:
         events_obj = await client.fetch_events(f, timedelta(seconds=10))
@@ -261,7 +262,7 @@ async def main():
 
     for event in events_list:
         if replies_count >= MAX_REPLIES:
-            print(f"Reached limit of {MAX_REPLIES} replies. Finishing run.")
+            print(f"Reached limit of {MAX_REPLIES} replies. Stopping run.")
             break
 
         try:
@@ -278,11 +279,15 @@ async def main():
             author_hex = event.author.to_hex().lower()
             author_pk = event.author
 
-        # الفلاتر الصارمة
+        # فحص 1: منع الرد على نفسك
         if bot_hex and author_hex == bot_hex:
             continue
+
+        # فحص 2: استبعاد المنشور إن تم الرد عليه سابقاً
         if event_id_hex in already_replied_events:
             continue
+
+        # فحص 3 صارم: استبعاد صاحب المنشور إن تم التفاعل معه سابقاً
         if author_hex in session_authors or author_hex in already_replied_authors:
             continue
 
@@ -295,17 +300,22 @@ async def main():
         
         if not clean_content or len(clean_content) < 8:
             continue
+
+        # فحص 4: حظر غير الإنجليزي والرموز الآسيوية
         if not is_clean_english(clean_content):
             continue
+
+        # فحص 5: استبعاد الفيديوهات والسبام
         if contains_video(clean_content) or is_spam(clean_content):
             continue
 
-        print(f"[{replies_count + 1}/{MAX_REPLIES}] Replying to {author_hex[:8]}...")
+        print(f"[{replies_count + 1}/{MAX_REPLIES}] Processing post from {author_hex[:8]}...")
         
         reply_text = generate_ai_reply(clean_content)
         if reply_text:
+            # إرفاق التنويه للمنشور المثبت عشوائياً (بنسبة ~40%)
             if random.random() < 0.40:
-                cta_choice = random.choice(CTA_TEMPLATES)
+                cta_choice = random.choice(CTA_VARIANTS)
                 reply_text += cta_choice
 
             tags = [Tag.event(event_id_obj), Tag.public_key(author_pk)]
@@ -325,13 +335,14 @@ async def main():
             already_replied_authors.add(author_hex)
             already_replied_events.add(event_id_hex)
             
-            print(f"Successfully posted: {reply_text}")
+            print(f"Successfully posted reply #{replies_count}: {reply_text}")
 
             if replies_count < MAX_REPLIES:
-                sleep_time = random.randint(8, 15)
+                sleep_time = random.randint(5, 10)
+                print(f"Waiting {sleep_time} seconds before next reply...")
                 await asyncio.sleep(sleep_time)
 
-    print(f"Finished! Posted {replies_count} replies successfully.")
+    print(f"Finished! Posted {replies_count} organic replies in this run.")
 
 if __name__ == "__main__":
     asyncio.run(main())
