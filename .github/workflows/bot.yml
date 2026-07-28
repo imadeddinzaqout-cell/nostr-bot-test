@@ -3,17 +3,15 @@ name: Nostr Gaza Bot Runner
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/30 * * * *' # 👈 يعمل كل 30 دقيقة طوال اليوم (يفحص، يرد، ثم يستريح)
-
-# 🛑 منع تداخل التشغيلات
-concurrency:
-  group: nostr-bot-group
-  cancel-in-progress: true
+    - cron: '*/5 * * * *' # أسرع تردد مسموح به في جيت هاب
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 10 # حد أقصى 10 دقائق لتنفيذ الدورة
+    timeout-minutes: 15
+    permissions:
+      actions: write
+      contents: read
 
     steps:
       - name: Checkout code
@@ -36,3 +34,10 @@ jobs:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
           python main.py
+
+      - name: Auto Re-trigger Workflow
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run "Nostr Gaza Bot Runner" --ref main
