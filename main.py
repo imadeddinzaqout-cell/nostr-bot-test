@@ -13,7 +13,7 @@ NOSTR_SECRET = os.getenv("NOSTR_NSEC", "").strip()
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 
 MAX_REPLIES = 18
-SLEEP_BETWEEN_CYCLES = 1200  # 20 دقيقة بالثواني
+SLEEP_BETWEEN_CYCLES = 600  # 20 دقيقة بالثواني
 
 CTA_VARIANTS = [
     "\n\n(If you have a moment, feel free to check my pinned post for our story in Gaza 🙏)",
