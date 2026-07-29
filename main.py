@@ -13,7 +13,7 @@ NOSTR_SECRET = os.getenv("NOSTR_NSEC", "").strip()
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 
 MAX_REPLIES = 18
-SLEEP_BETWEEN_CYCLES = 600  # 20 دقيقة بالثواني
+SLEEP_BETWEEN_CYCLES = 600  # 10 دقائق بالثواني
 
 CTA_VARIANTS = [
     "\n\n(If you have a moment, feel free to check my pinned post for our story in Gaza 🙏)",
@@ -210,15 +210,23 @@ async def run_single_cycle():
     print(f"Completed cycle! Posted {replies_count} replies.")
 
 async def main():
-    print("Starting continuous bot loop...")
-    while True:
+    print("Starting controlled bot loop...")
+    max_cycles = 30  # 30 دورة تضم النشر والانتظار 10 دقائق (حوالي 5.5 ساعة إجمالاً)
+    current_cycle = 0
+
+    while current_cycle < max_cycles:
+        current_cycle += 1
+        print(f"\n--- Starting Cycle {current_cycle}/{max_cycles} ---")
         try:
             await run_single_cycle()
         except Exception as e:
             print(f"Error in cycle execution: {e}")
         
-        print(f"Waiting for 20 minutes ({SLEEP_BETWEEN_CYCLES} seconds) before the next cycle...")
-        await asyncio.sleep(SLEEP_BETWEEN_CYCLES)
+        if current_cycle < max_cycles:
+            print(f"Waiting for 10 minutes ({SLEEP_BETWEEN_CYCLES} seconds) before the next cycle...")
+            await asyncio.sleep(SLEEP_BETWEEN_CYCLES)
+
+    print("Completed 30 cycles successfully (~5.5 hours). Exiting cleanly before GitHub timeout.")
 
 if __name__ == "__main__":
     asyncio.run(main())
