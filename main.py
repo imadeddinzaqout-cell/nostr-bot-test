@@ -13,6 +13,7 @@ NOSTR_SECRET = os.getenv("NOSTR_NSEC", "").strip()
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 
 MAX_REPLIES = 18
+SLEEP_BETWEEN_CYCLES = 1200  # 20 دقيقة بالثواني
 
 CTA_VARIANTS = [
     "\n\n(If you have a moment, feel free to check my pinned post for our story in Gaza 🙏)",
@@ -81,7 +82,8 @@ def generate_ai_reply(prompt_text):
         print(f"Error calling DeepSeek API: {e}")
     return None
 
-async def main():
+async def run_single_cycle():
+    """دورة واحدة من البحث والنشر (18 رداً)"""
     if not NOSTR_SECRET or not DEEPSEEK_API_KEY:
         print("Error: Missing secrets in GitHub.")
         return
@@ -205,7 +207,18 @@ async def main():
             if replies_count < MAX_REPLIES:
                 await asyncio.sleep(random.randint(5, 10))
 
-    print(f"Completed! Posted {replies_count} replies in this run.")
+    print(f"Completed cycle! Posted {replies_count} replies.")
+
+async def main():
+    print("Starting continuous bot loop...")
+    while True:
+        try:
+            await run_single_cycle()
+        except Exception as e:
+            print(f"Error in cycle execution: {e}")
+        
+        print(f"Waiting for 20 minutes ({SLEEP_BETWEEN_CYCLES} seconds) before the next cycle...")
+        await asyncio.sleep(SLEEP_BETWEEN_CYCLES)
 
 if __name__ == "__main__":
     asyncio.run(main())
