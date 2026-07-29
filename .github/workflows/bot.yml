@@ -2,8 +2,16 @@ name: Nostr Gaza Bot Runner
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
   schedule:
     - cron: '0 */6 * * *'
+
+# هذا الجزء يضمن إيقاف وإلغاء أي تشغيل قديم فوراً بمجرد رفع تعديل جديد أو تشغيل جديد
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
 
 jobs:
   run-bot:
