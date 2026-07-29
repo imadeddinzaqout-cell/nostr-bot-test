@@ -1,22 +1,17 @@
 name: Nostr Gaza Bot Runner
 
-concurrency:
-  group: nostr-bot-single-instance
-  cancel-in-progress: false
-
 on:
-  workflow_dispatch:
+  workflow_dispatch: # يتيح لك التشغيل اليدوي في أي وقت
   schedule:
-    # تشغيل كل 10 دقائق لتنفيذ 144 تشغيلة يومياً
-    - cron: '*/10 * * * *'
+    - cron: '*/20 * * * *' # تشغيل تلقائي كل 20 دقيقة (أو يمكنك تغييرها لـ 15 أو 30 دقيقة)
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15 # حد أقصى للتشغيلة الواحدة (15 دقيقة كافية وزيادة)
 
     steps:
-      - name: Checkout code
+      - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -24,14 +19,13 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install nostr-sdk requests
+          pip install requests nostr-sdk
 
-      - name: Execute Nostr Bot
+      - name: Run Bot Script
         env:
           NOSTR_NSEC: ${{ secrets.NOSTR_NSEC }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-        run: |
-          python main.py
+        run: python bot.py
