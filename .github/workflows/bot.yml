@@ -6,9 +6,9 @@ on:
     branches:
       - main
   schedule:
-    - cron: '0 */6 * * *'
+    # يعمل تلقائياً كل 5 ساعات
+    - cron: '0 */5 * * *'
 
-# هذا الجزء يضمن إيقاف وإلغاء أي تشغيل قديم فوراً بمجرد رفع تعديل جديد أو تشغيل جديد
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: true
