@@ -1,14 +1,14 @@
 name: Nostr Gaza Bot Runner
 
 on:
-  workflow_dispatch: # يتيح لك التشغيل اليدوي في أي وقت
+  workflow_dispatch:
   schedule:
-    - cron: '*/10 * * * *' # تشغيل تلقائي كل 20 دقيقة (أو يمكنك تغييرها لـ 15 أو 30 دقيقة)
+    - cron: '*/20 * * * *'
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 15 # حد أقصى للتشغيلة الواحدة (15 دقيقة كافية وزيادة)
+    timeout-minutes: 15
 
     steps:
       - name: Checkout Code
