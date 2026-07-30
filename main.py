@@ -12,8 +12,8 @@ from nostr_sdk import (
 NOSTR_SECRET = os.getenv("NOSTR_NSEC", "").strip()
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 
-MAX_REPLIES = 8  # تم التخفيض إلى 8 تعليقات فقط لكل دورة
-SLEEP_BETWEEN_CYCLES = 1200  # 20 دقيقة بالثواني (20 * 60)
+MAX_REPLIES = 8  # 8 تعليقات لكل دورة
+SLEEP_BETWEEN_CYCLES = 1200  # 20 دقيقة انتظار بين الدورات
 
 CTA_VARIANTS = [
     "\n\n(If you have a moment, feel free to check my pinned post for our story in Gaza 🙏)",
@@ -83,7 +83,7 @@ def generate_ai_reply(prompt_text):
     return None
 
 async def run_single_cycle():
-    """دورة واحدة من البحث والنشر (8 ردود)"""
+    """دورة واحدة من البحث والنشر (8 ردود مع إضافة نص الدعوة لجميع التعليقات)"""
     if not NOSTR_SECRET or not DEEPSEEK_API_KEY:
         print("Error: Missing secrets in GitHub.")
         return
@@ -187,8 +187,8 @@ async def run_single_cycle():
 
         reply_text = generate_ai_reply(clean_content)
         if reply_text:
-            if random.random() < 0.40:
-                reply_text += random.choice(CTA_VARIANTS)
+            # إضافة نص الدعوة لجميع التعليقات دائماً
+            reply_text += random.choice(CTA_VARIANTS)
 
             tags = [Tag.event(event_id_obj), Tag.public_key(author_pk)]
             try:
