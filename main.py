@@ -12,8 +12,8 @@ from nostr_sdk import (
 NOSTR_SECRET = os.getenv("NOSTR_NSEC", "").strip()
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 
-MAX_REPLIES = 18
-SLEEP_BETWEEN_CYCLES = 600  # 10 دقائق بالثواني
+MAX_REPLIES = 8  # تم التخفيض إلى 8 تعليقات فقط لكل دورة
+SLEEP_BETWEEN_CYCLES = 1200  # 20 دقيقة بالثواني (20 * 60)
 
 CTA_VARIANTS = [
     "\n\n(If you have a moment, feel free to check my pinned post for our story in Gaza 🙏)",
@@ -83,7 +83,7 @@ def generate_ai_reply(prompt_text):
     return None
 
 async def run_single_cycle():
-    """دورة واحدة من البحث والنشر (18 رداً)"""
+    """دورة واحدة من البحث والنشر (8 ردود)"""
     if not NOSTR_SECRET or not DEEPSEEK_API_KEY:
         print("Error: Missing secrets in GitHub.")
         return
@@ -211,7 +211,7 @@ async def run_single_cycle():
 
 async def main():
     print("Starting controlled bot loop...")
-    max_cycles = 30  # 30 دورة تضم النشر والانتظار 10 دقائق (حوالي 5.5 ساعة إجمالاً)
+    max_cycles = 15  # 15 دورة تفصل بينها 20 دقيقة (حوالي 5.25 ساعة إجمالاً)
     current_cycle = 0
 
     while current_cycle < max_cycles:
@@ -223,10 +223,10 @@ async def main():
             print(f"Error in cycle execution: {e}")
         
         if current_cycle < max_cycles:
-            print(f"Waiting for 10 minutes ({SLEEP_BETWEEN_CYCLES} seconds) before the next cycle...")
+            print(f"Waiting for 20 minutes ({SLEEP_BETWEEN_CYCLES} seconds) before the next cycle...")
             await asyncio.sleep(SLEEP_BETWEEN_CYCLES)
 
-    print("Completed 30 cycles successfully (~5.5 hours). Exiting cleanly before GitHub timeout.")
+    print("Completed 15 cycles successfully (~5.25 hours). Exiting cleanly before GitHub timeout.")
 
 if __name__ == "__main__":
     asyncio.run(main())
