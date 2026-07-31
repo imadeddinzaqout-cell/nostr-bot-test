@@ -14,8 +14,8 @@ sys.stdout.reconfigure(line_buffering=True)
 NOSTR_SECRET = os.getenv("NOSTR_NSEC", "").strip()
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 
-MAX_REPLIES = 8  # 8 تعليقات لكل دورة
-SLEEP_BETWEEN_CYCLES = 1200  # 20 دقيقة انتظار بين الدورات
+MAX_REPLIES = 10  # 10 تعليقات لكل دورة
+SLEEP_BETWEEN_CYCLES = 600  # 10 دقائق انتظار بين الدورات (600 ثانية)
 
 CTA_VARIANTS = [
     "\n\n(If you have a moment, feel free to check our story & support our family in Gaza 🙏 https://chuffed.org/project/125341-urgent-appeal-help-the-family-of-aya-and-imad)",
@@ -85,7 +85,7 @@ def generate_ai_reply(prompt_text):
     return None
 
 async def run_single_cycle():
-    """دورة واحدة من البحث والنشر (8 ردود مع إضافة الرابط لجميع التعليقات)"""
+    """دورة واحدة من البحث والنشر (10 ردود مع الرابط)"""
     if not NOSTR_SECRET or not DEEPSEEK_API_KEY:
         print("Error: Missing secrets in GitHub.")
         return
@@ -189,7 +189,6 @@ async def run_single_cycle():
 
         reply_text = generate_ai_reply(clean_content)
         if reply_text:
-            # إضافة نص الدعوة المباشر مع الرابط لكل تعليق
             reply_text += random.choice(CTA_VARIANTS)
 
             tags = [Tag.event(event_id_obj), Tag.public_key(author_pk)]
@@ -213,7 +212,7 @@ async def run_single_cycle():
 
 async def main():
     print("Starting controlled bot loop...")
-    max_cycles = 15  # 15 دورة تفصل بينها 20 دقيقة (حوالي 5.25 ساعة إجمالاً)
+    max_cycles = 30  # 30 دورة تفصل بينها 10 دقائق (حوالي 5.2 ساعة إجمالاً)
     current_cycle = 0
 
     while current_cycle < max_cycles:
@@ -225,10 +224,10 @@ async def main():
             print(f"Error in cycle execution: {e}")
         
         if current_cycle < max_cycles:
-            print(f"Waiting for 20 minutes ({SLEEP_BETWEEN_CYCLES} seconds) before the next cycle...")
+            print(f"Waiting for 10 minutes ({SLEEP_BETWEEN_CYCLES} seconds) before the next cycle...")
             await asyncio.sleep(SLEEP_BETWEEN_CYCLES)
 
-    print("Completed 15 cycles successfully (~5.25 hours). Exiting cleanly before GitHub timeout.")
+    print("Completed 30 cycles successfully (~5.2 hours). Exiting cleanly before GitHub timeout.")
 
 if __name__ == "__main__":
     asyncio.run(main())
