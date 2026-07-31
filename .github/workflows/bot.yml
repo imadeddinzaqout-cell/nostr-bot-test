@@ -36,4 +36,4 @@ jobs:
         env:
           NOSTR_NSEC: ${{ secrets.NOSTR_NSEC }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-        run: python main.py
+        run: python -u main.py
