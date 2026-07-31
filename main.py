@@ -8,6 +8,8 @@ from nostr_sdk import (
     Client, NostrSigner, Keys, Filter, EventBuilder, Tag, Kind,
     NostrConnect, NostrConnectUri, RelayUrl
 )
+import sys
+sys.stdout.reconfigure(line_buffering=True)
 
 NOSTR_SECRET = os.getenv("NOSTR_NSEC", "").strip()
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
