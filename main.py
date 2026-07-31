@@ -16,10 +16,10 @@ MAX_REPLIES = 8  # 8 تعليقات لكل دورة
 SLEEP_BETWEEN_CYCLES = 1200  # 20 دقيقة انتظار بين الدورات
 
 CTA_VARIANTS = [
-    "\n\n(If you have a moment, feel free to check my pinned post for our story in Gaza 🙏)",
-    "\n\n(Btw, I shared our family's campaign in my pinned note if you'd like to take a look ❤️)",
-    "\n\n(Feel free to check my pinned post if you wish to support my family in Gaza 🙏)",
-    "\n\n(Take a quick look at my pinned note if you'd like to read our story in Gaza ❤️)"
+    "\n\n(If you have a moment, feel free to check our story & support our family in Gaza 🙏 https://chuffed.org/project/125341-urgent-appeal-help-the-family-of-aya-and-imad)",
+    "\n\n(Btw, I shared our family's campaign here if you'd like to take a look ❤️ https://chuffed.org/project/125341-urgent-appeal-help-the-family-of-aya-and-imad)",
+    "\n\n(Feel free to check our campaign if you wish to support my family in Gaza 🙏 https://chuffed.org/project/125341-urgent-appeal-help-the-family-of-aya-and-imad)",
+    "\n\n(Take a quick look at our story & support link in Gaza ❤️ https://chuffed.org/project/125341-urgent-appeal-help-the-family-of-aya-and-imad)"
 ]
 
 def is_clean_english(text):
@@ -83,7 +83,7 @@ def generate_ai_reply(prompt_text):
     return None
 
 async def run_single_cycle():
-    """دورة واحدة من البحث والنشر (8 ردود مع إضافة نص الدعوة لجميع التعليقات)"""
+    """دورة واحدة من البحث والنشر (8 ردود مع إضافة الرابط لجميع التعليقات)"""
     if not NOSTR_SECRET or not DEEPSEEK_API_KEY:
         print("Error: Missing secrets in GitHub.")
         return
@@ -187,7 +187,7 @@ async def run_single_cycle():
 
         reply_text = generate_ai_reply(clean_content)
         if reply_text:
-            # إضافة نص الدعوة لجميع التعليقات دائماً
+            # إضافة نص الدعوة المباشر مع الرابط لكل تعليق
             reply_text += random.choice(CTA_VARIANTS)
 
             tags = [Tag.event(event_id_obj), Tag.public_key(author_pk)]
