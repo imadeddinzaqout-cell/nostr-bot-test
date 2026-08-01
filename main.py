@@ -17,11 +17,13 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 MAX_REPLIES = 10  # 10 تعليقات لكل دورة
 SLEEP_BETWEEN_CYCLES = 600  # 10 دقائق انتظار بين الدورات (600 ثانية)
 
+# عبارات CTA مخصصة لشبكة Nostr تعتمد على الـ Zaps بدون روابط خارجية
 CTA_VARIANTS = [
-    "\n\n(If you have a moment, feel free to check our story & support our family in Gaza 🙏 https://chuffed.org/project/125341-urgent-appeal-help-the-family-of-aya-and-imad)",
-    "\n\n(Btw, I shared our family's campaign here if you'd like to take a look ❤️ https://chuffed.org/project/125341-urgent-appeal-help-the-family-of-aya-and-imad)",
-    "\n\n(Feel free to check our campaign if you wish to support my family in Gaza 🙏 https://chuffed.org/project/125341-urgent-appeal-help-the-family-of-aya-and-imad)",
-    "\n\n(Take a quick look at our story & support link in Gaza ❤️ https://chuffed.org/project/125341-urgent-appeal-help-the-family-of-aya-and-imad)"
+    "\n\n(If you'd like to support my family in Gaza, even a small zap means the world to us 🙏⚡)",
+    "\n\n(Every small zap helps my family rebuild and stay safe ❤️⚡)",
+    "\n\n(Feel free to send a small zap if you wish to support my family in Gaza 🙏⚡)",
+    "\n\n(A small zap can make a huge difference for my family right now ⚡❤️)",
+    "\n\n(If you feel moved to help, any small zap is deeply appreciated 🙏⚡)"
 ]
 
 def is_clean_english(text):
@@ -59,7 +61,7 @@ def generate_ai_reply(prompt_text):
         "1. MUST respond ONLY in natural English. NEVER use Japanese, Chinese, or non-English scripts.\n"
         "2. Keep your reply to 1 concise, direct, and empathetic human sentence reacting strictly to what the author wrote.\n"
         "3. NEVER use generic bot phrases like 'I completely agree', 'Great perspective', 'Thank you for sharing'.\n"
-        "4. Do NOT mention Gaza or donation links in your main response text.\n"
+        "4. Do NOT mention Gaza, donations, or zaps in your main response text.\n"
         "5. If the post is non-English, empty, automated code, pure media links without text, or total nonsense, respond ONLY with: SKIP"
     )
 
@@ -85,7 +87,7 @@ def generate_ai_reply(prompt_text):
     return None
 
 async def run_single_cycle():
-    """دورة واحدة من البحث والنشر (10 ردود مع الرابط)"""
+    """دورة واحدة من البحث والنشر (10 ردود تعتمد على Zaps)"""
     if not NOSTR_SECRET or not DEEPSEEK_API_KEY:
         print("Error: Missing secrets in GitHub.")
         return
@@ -206,13 +208,16 @@ async def run_single_cycle():
             print(f"Posted reply #{replies_count}: {reply_text}")
 
             if replies_count < MAX_REPLIES:
-                await asyncio.sleep(random.randint(5, 10))
+                # الانتظار الطبيعي بين 45 إلى 90 ثانية بين الرد والآخر
+                sleep_time = random.randint(45, 90)
+                print(f"Waiting {sleep_time} seconds before next reply...")
+                await asyncio.sleep(sleep_time)
 
     print(f"Completed cycle! Posted {replies_count} replies.")
 
 async def main():
     print("Starting controlled bot loop...")
-    max_cycles = 30  # 30 دورة تفصل بينها 10 دقائق (حوالي 5.2 ساعة إجمالاً)
+    max_cycles = 30  # 30 دورة تفصل بينها 10 دقائق
     current_cycle = 0
 
     while current_cycle < max_cycles:
@@ -227,7 +232,7 @@ async def main():
             print(f"Waiting for 10 minutes ({SLEEP_BETWEEN_CYCLES} seconds) before the next cycle...")
             await asyncio.sleep(SLEEP_BETWEEN_CYCLES)
 
-    print("Completed 30 cycles successfully (~5.2 hours). Exiting cleanly before GitHub timeout.")
+    print("Completed 30 cycles successfully. Exiting cleanly.")
 
 if __name__ == "__main__":
     asyncio.run(main())
