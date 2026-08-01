@@ -5,7 +5,8 @@ import asyncio
 import requests
 from datetime import timedelta
 from nostr_sdk import (
-    Client, NostrSigner, Keys, Filter, EventBuilder, Tag, Kind, NostrConnect, NostrConnectUri, RelayUrl
+    Client, NostrSigner, Keys, Filter, EventBuilder, Tag, Kind,
+    NostrConnect, NostrConnectUri, RelayUrl
 )
 import sys
 sys.stdout.reconfigure(line_buffering=True)
@@ -13,8 +14,8 @@ sys.stdout.reconfigure(line_buffering=True)
 NOSTR_SECRET = os.getenv("NOSTR_NSEC", "").strip()
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 
-MAX_REPLIES = 10
-SLEEP_BETWEEN_CYCLES = 300
+MAX_REPLIES = 10  # 10 تعليقات لكل دورة
+SLEEP_BETWEEN_CYCLES = 300  # 5 دقائق انتظار بين الدورات الكبيرة
 
 # عبارات Zaps سريعة وإنسانية
 CTA_VARIANTS = [
@@ -97,44 +98,6 @@ def generate_ai_reply(prompt_text):
         print(f"Error calling DeepSeek API: {e}")
     return None
 
-async def fetch_events_safe(client, f, timeout):
-    """دالة مرنة وآمنة لجلب المنشورات تتوافق مع مختلف إصدارات مكتبة nostr-sdk"""
-    for method_name in ['get_events_of', 'fetch_events', 'req_events_of']:
-        if hasattr(client, method_name):
-            func = getattr(client, method_name)
-            try:
-                res = func([f], timeout)
-                if asyncio.iscoroutine(res):
-                    res = await res
-                return res
-            except Exception:
-                try:
-                    res = func(f, timeout)
-                    if asyncio.iscoroutine(res):
-                        res = await res
-                    return res
-                except Exception:
-                    pass
-    if hasattr(client, 'database'):
-        db = client.database()
-        for method_name in ['get_events_of', 'query', 'fetch_events']:
-            if hasattr(db, method_name):
-                func = getattr(db, method_name)
-                try:
-                    res = func([f])
-                    if asyncio.iscoroutine(res):
-                        res = await res
-                    return res
-                except Exception:
-                    try:
-                        res = func(f)
-                        if asyncio.iscoroutine(res):
-                            res = await res
-                        return res
-                    except Exception:
-                        pass
-    return []
-
 async def run_single_cycle():
     """دورة سريعة لجلب أحدث المنشورات على المنصة في هذه اللحظة"""
     if not NOSTR_SECRET or not DEEPSEEK_API_KEY:
@@ -190,7 +153,7 @@ async def run_single_cycle():
     if bot_pk:
         history_filter = Filter().author(bot_pk).kind(Kind(1)).limit(500)
         try:
-            history_obj = await fetch_events_safe(client, history_filter, timedelta(seconds=12))
+            history_obj = await client.fetch_events(history_filter, timedelta(seconds=12))
             history_list = history_obj.to_vec() if hasattr(history_obj, "to_vec") else list(history_obj)
         except Exception:
             history_list = []
@@ -210,7 +173,7 @@ async def run_single_cycle():
     # جلب أحدث 300 منشور على الشبكة
     f = Filter().kind(Kind(1)).limit(300)
     try:
-        events_obj = await fetch_events_safe(client, f, timedelta(seconds=10))
+        events_obj = await client.fetch_events(f, timedelta(seconds=10))
         events_list = events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj)
     except Exception as e:
         print(f"Error fetching events: {e}")
@@ -245,7 +208,7 @@ async def run_single_cycle():
         if bot_hex and author_hex == bot_hex: continue
         if event_id_hex in already_replied_events: continue
         if author_hex in session_authors or author_hex in already_replied_authors: continue
-        if is_reply_or_quote(event): continue
+        if is_reply_or_quote(event): continue  # التأكد أنه منشور أصلي
 
         content = event.content() if callable(event.content) else event.content
         clean_content = content.strip() if content else ""
@@ -273,6 +236,7 @@ async def run_single_cycle():
             print(f"Posted FAST reply #{replies_count}: {reply_text}")
 
             if replies_count < MAX_REPLIES:
+                # التأخير السريع: من 5 إلى 10 ثوانٍ فقط
                 fast_sleep = random.randint(5, 10)
                 print(f"Waiting {fast_sleep}s for next reply...")
                 await asyncio.sleep(fast_sleep)
