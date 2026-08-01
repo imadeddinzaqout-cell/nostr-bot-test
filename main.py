@@ -73,7 +73,7 @@ def generate_ai_reply(prompt_text):
         "temperature": 0.7
     }
     try:
-        response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=30)
+        response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=25)
         if response.status_code == 200:
             res_text = response.json()["choices"][0]["message"]["content"].strip()
             if "SKIP" in res_text or "can't react" in res_text.lower() or len(res_text) < 5:
@@ -82,7 +82,7 @@ def generate_ai_reply(prompt_text):
                 return None
             return res_text
     except Exception as e:
-        print(f"Error calling DeepSeek API: {e}")
+        print(f"DeepSeek API notice: {e}")
     return None
 
 async def run_single_cycle():
@@ -112,7 +112,6 @@ async def run_single_cycle():
 
     client = Client(signer)
     
-    # ربط ريلايين رئيسيين لضمان سرعة وضمان استقبال المنشورات فوراً
     relay_list = ["wss://relay.damus.io", "wss://nos.lol"]
     for r_url in relay_list:
         try:
@@ -132,7 +131,6 @@ async def run_single_cycle():
     
     events_list = []
     try:
-        # زيادة مهلة الجلب إلى 15 ثانية لضمان استقبال المنشورات من الريلايين بدقة
         events_obj = await asyncio.wait_for(client.fetch_events(f, timedelta(seconds=15)), timeout=18)
         events_list = events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj)
     except Exception as e:
@@ -180,7 +178,8 @@ async def run_single_cycle():
             if not is_clean_english(clean_content): continue
             if contains_video(clean_content) or is_spam(clean_content): continue
 
-            reply_text = generate_ai_reply(clean_content)
+            # تشغيل توليد الرد مع حماية زمنية لتفادي أي تعليق في المعالجة الفردية
+            reply_text = await asyncio.to_thread(generate_ai_reply, clean_content)
             if reply_text:
                 reply_text += random.choice(CTA_VARIANTS)
 
@@ -201,7 +200,7 @@ async def run_single_cycle():
                     print(f"Waiting {fast_sleep}s for next reply...")
                     await asyncio.sleep(fast_sleep)
         except Exception as loop_err:
-            print(f"Error processing event: {loop_err}")
+            print(f"Skipping event due to processing error: {loop_err}")
             continue
 
     print(f"Completed fast cycle! Posted {replies_count} replies.")
