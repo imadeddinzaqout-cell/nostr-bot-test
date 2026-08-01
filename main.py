@@ -85,89 +85,69 @@ def generate_ai_reply(prompt_text):
         print(f"Error calling DeepSeek API: {e}")
     return None
 
-def fetch_events_via_http():
-    """جلب أحدث المنشورات باستخدام HTTP REST API لتجنب مشاكل WebSocket Timeout في السيرفرات"""
-    url = "https://relay.dam.io" # بديل سريع أو استخدام nostr.band
-    # استخدام nostr.band للبحث السريع عبر الـ API
-    api_url = "https://api.nostr.band/v0/posts/trending" # أو استعلام مباشر
-    # سنستخدم استعلام مباشر لـ nostr.band أو ريلاي يدعم ن一般的 القراءة
-    try:
-        # محاولة جلب أحدث المنشورات عبر Nostr.band API المخصص للسرعة
-        resp = requests.get("https://api.nostr.band/v0/stats/profiles", timeout=10)
-        # الطريقة الأضمن والأسرع: استخدام Nostr.band search API للمنشورات النصية الطازجة
-        res = requests.get("https://nostr.band/api/v0/top/contacts", timeout=10)
-    except Exception:
-        pass
-
-    # بديل مباشر وبسيط عبر نداء HTTP لـ nostr.band queries
-    events = []
-    try:
-        headers = {'Accept': 'application/json'}
-        # جلب أحدث الـ notes عبر Nostr.band endpoint المخصص
-        r = requests.get("https://api.nostr.band/v0/posts/new", timeout=10)
-        if r.status_code == 200:
-            data = r.json()
-            if "posts" in data:
-                for p in data["posts"]:
-                    events.append({
-                        "id": p.get("id"),
-                        "pubkey": p.get("pubkey"),
-                        "content": p.get("content"),
-                        "created_at": p.get("created_at")
-                    })
-    except Exception as e:
-        print(f"HTTP fetch error: {e}")
-    return events
-
 async def run_single_cycle():
     if not NOSTR_SECRET or not DEEPSEEK_API_KEY:
         print("Error: Missing secrets in GitHub.")
         return
 
-    print("Fetching latest global timeline via HTTP API...")
-    raw_posts = fetch_events_via_http()
-    
-    if not raw_posts:
-        print("No events found via HTTP, falling back to direct relay connection...")
-        # الطريقة التقليدية السريعة في حال لم يعمل الـ API
-        if NOSTR_SECRET.startswith("nsec1"):
-            keys = Keys.parse(NOSTR_SECRET)
-            signer = NostrSigner.keys(keys)
-        else:
-            return
-        client = Client(signer)
-        await client.add_relay(RelayUrl.parse("wss://nos.lol"))
-        await client.connect()
-        f = Filter().kind(Kind(1)).limit(30)
-        events_obj = await client.fetch_events(f, timedelta(seconds=5))
-        # تحويل سريع
-        raw_posts = []
-        for ev in events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj):
-            try:
-                raw_posts.append({
-                    "id": ev.id().to_hex() if callable(ev.id) else str(ev.id),
-                    "pubkey": ev.author().to_hex() if callable(ev.author) else str(ev.author),
-                    "content": ev.content() if callable(ev.content) else ev.content,
-                    "created_at": ev.created_at().as_secs() if callable(ev.created_at) else 0
-                })
-            except Exception:
-                continue
-
-    if not raw_posts:
-        print("No events found at all.")
-        return
-
-    # تهيئة العميل للإرسال فقط (بدون انتظار جلب معقد)
     if NOSTR_SECRET.startswith("nsec1"):
         keys = Keys.parse(NOSTR_SECRET)
         signer = NostrSigner.keys(keys)
+    elif NOSTR_SECRET.startswith("bunker://") or NOSTR_SECRET.startswith("nostrconnect://"):
+        app_keys = Keys.generate()
+        try:
+            uri = NostrConnectUri.parse(NOSTR_SECRET)
+        except Exception:
+            uri = NOSTR_SECRET
+        try:
+            from nostr_sdk import NostrConnectOptions
+            opts = NostrConnectOptions()
+        except Exception:
+            opts = None
+        nc = NostrConnect(uri, app_keys, timedelta(seconds=30), opts)
+        signer = NostrSigner.nostr_connect(nc)
     else:
+        print("Error: Invalid NOSTR_NSEC format.")
         return
 
     client = Client(signer)
-    await client.add_relay(RelayUrl.parse("wss://nos.lol"))
-    await client.add_relay(RelayUrl.parse("wss://relay.damus.io"))
-    await client.connect()
+    
+    # استخدام ريلاي واحد سريع ومستقر تماماً
+    relay_url_str = "wss://relay.damus.io"
+    try:
+        await client.add_relay(RelayUrl.parse(relay_url_str))
+    except Exception:
+        await client.add_relay(relay_url_str)
+
+    print("Connecting to Nostr Relay...")
+    try:
+        await asyncio.wait_for(client.connect(), timeout=10)
+        print("Connected to Nostr Relay successfully!")
+    except Exception as e:
+        print(f"Connection notice: {e}")
+
+    print("Fetching latest global timeline...")
+    f = Filter().kind(Kind(1)).limit(40)
+    
+    events_list = []
+    try:
+        # استخدام get_events_of مع مهلة مريحة جداً لتفادي أي تعليق
+        events_obj = await asyncio.wait_for(client.get_events_of([f], timedelta(seconds=12)), timeout=15)
+        events_list = events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj)
+    except Exception as e:
+        print(f"Fetch notice: {e}")
+
+    if not events_list:
+        print("No events fetched in this cycle.")
+        return
+
+    def get_event_time(ev):
+        try:
+            return ev.created_at().as_secs() if callable(ev.created_at) else getattr(ev, 'created_at', 0)
+        except Exception:
+            return 0
+
+    events_list.sort(key=get_event_time, reverse=True)
 
     try:
         bot_pk = await signer.public_key()
@@ -178,45 +158,50 @@ async def run_single_cycle():
     replies_count = 0
     session_authors = set()
 
-    for p in raw_posts:
+    for event in events_list:
         if replies_count >= MAX_REPLIES:
             break
 
-        event_id_hex = str(p.get("id", "")).lower()
-        author_hex = str(p.get("pubkey", "")).lower()
-        clean_content = str(p.get("content", "")).strip()
+        try:
+            event_id_obj = event.id() if callable(event.id) else event.id
+            event_id_hex = (event_id_obj.to_hex() if hasattr(event_id_obj, "to_hex") else str(event_id_obj)).lower()
 
-        if not event_id_hex or not author_hex: continue
-        if bot_hex and author_hex == bot_hex: continue
-        if author_hex in session_authors: continue
+            author_pk = event.author() if callable(event.author) else event.author
+            author_hex = author_pk.to_hex().lower()
 
-        if not clean_content or len(clean_content) < 8: continue
-        if not is_clean_english(clean_content): continue
-        if contains_video(clean_content) or is_spam(clean_content): continue
+            if bot_hex and author_hex == bot_hex: continue
+            if author_hex in session_authors: continue
 
-        reply_text = generate_ai_reply(clean_content)
-        if reply_text:
-            reply_text += random.choice(CTA_VARIANTS)
+            content = event.content() if callable(event.content) else event.content
+            clean_content = content.strip() if content else ""
 
-            try:
-                from nostr_sdk import EventId, PublicKey
-                event_id_obj = EventId.parse(event_id_hex)
-                author_pk_obj = PublicKey.parse(author_hex)
-                tags = [Tag.event(event_id_obj), Tag.public_key(author_pk_obj)]
-                builder = EventBuilder.text_note(reply_text).tags(tags)
-            except Exception:
-                builder = EventBuilder(Kind(1), reply_text, [])
+            if not clean_content or len(clean_content) < 8: continue
+            if not is_clean_english(clean_content): continue
+            if contains_video(clean_content) or is_spam(clean_content): continue
 
-            await client.send_event_builder(builder)
-            replies_count += 1
-            session_authors.add(author_hex)
+            reply_text = generate_ai_reply(clean_content)
+            if reply_text:
+                reply_text += random.choice(CTA_VARIANTS)
 
-            print(f"Posted FAST reply #{replies_count}: {reply_text}")
+                tags = [Tag.event(event_id_obj), Tag.public_key(author_pk)]
+                try:
+                    builder = EventBuilder.text_note(reply_text).tags(tags)
+                except Exception:
+                    builder = EventBuilder(Kind(1), reply_text, tags)
 
-            if replies_count < MAX_REPLIES:
-                fast_sleep = random.randint(5, 10)
-                print(f"Waiting {fast_sleep}s for next reply...")
-                await asyncio.sleep(fast_sleep)
+                await client.send_event_builder(builder)
+                replies_count += 1
+                session_authors.add(author_hex)
+
+                print(f"Posted FAST reply #{replies_count}: {reply_text}")
+
+                if replies_count < MAX_REPLIES:
+                    fast_sleep = random.randint(5, 10)
+                    print(f"Waiting {fast_sleep}s for next reply...")
+                    await asyncio.sleep(fast_sleep)
+        except Exception as loop_err:
+            print(f"Error processing event: {loop_err}")
+            continue
 
     print(f"Completed fast cycle! Posted {replies_count} replies.")
 
