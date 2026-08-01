@@ -123,7 +123,6 @@ async def run_single_cycle():
 
     client = Client(signer)
     
-    # استخدام ريلاي أساسي واحد أو اثنين لضمان سرعة الاستجابة القصوى وعدم حدوث تداخل
     relay_list = [
         "wss://relay.damus.io", 
         "wss://nos.lol"
@@ -147,17 +146,16 @@ async def run_single_cycle():
     already_replied_events = set()
     already_replied_authors = set()
 
-    # تخطي جلب التاريخ الثقيل تماماً إذا كان يسبب تعليقاً، والاعتماد على منع تكرار الجلسة الحالية فقط
     print("Fetching latest global timeline...")
     f = Filter().kind(Kind(1)).limit(50)
     
     try:
-        # استخدام asyncio.wait_for لعملية جلب المنشورات لمنع التعليق نهائياً
+        # رفع المهلة الداخلية إلى 15 ثانية والمهلة الكلية إلى 25 ثانية لضمان جلب البيانات برياحة
         async def fetch_posts():
-            obj = await client.fetch_events(f, timedelta(seconds=4))
+            obj = await client.fetch_events(f, timedelta(seconds=15))
             return obj.to_vec() if hasattr(obj, "to_vec") else list(obj)
 
-        events_list = await asyncio.wait_for(fetch_posts(), timeout=8)
+        events_list = await asyncio.wait_for(fetch_posts(), timeout=25)
     except asyncio.TimeoutError:
         print("Fetch events timed out internally!")
         return
@@ -233,7 +231,7 @@ async def main():
         current_cycle += 1
         print(f"\n--- Starting Cycle {current_cycle}/{max_cycles} ---")
         try:
-            await asyncio.wait_for(run_single_cycle(), timeout=60)
+            await asyncio.wait_for(run_single_cycle(), timeout=90)
         except asyncio.TimeoutError:
             print("Cycle timed out! Skipping to next wait period...")
         except Exception as e:
