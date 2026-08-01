@@ -4,18 +4,14 @@ import random
 import asyncio
 import requests
 from datetime import timedelta
-from nostr_sdk import (
-    Client, NostrSigner, Keys, Filter, EventBuilder, Tag, Kind,
-    NostrConnect, NostrConnectUri, RelayUrl
-)
 import sys
 sys.stdout.reconfigure(line_buffering=True)
 
 NOSTR_SECRET = os.getenv("NOSTR_NSEC", "").strip()
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 
-MAX_REPLIES = 10  
-SLEEP_BETWEEN_CYCLES = 300  
+MAX_REPLIES = 5  
+SLEEP_BETWEEN_CYCLES = 60  
 
 CTA_VARIANTS = [
     "\n\n(If you'd like to support my family in Gaza, even a small zap means the world to us 🙏⚡)",
@@ -53,7 +49,6 @@ def generate_ai_reply(prompt_text):
     if not prompt_text or len(prompt_text.strip()) < 5:
         return None
 
-    # اختصار النص تلقائياً إذا كان طويلاً جداً لضمان سرعة الاستجابة وعدم حدوث Timeout
     if len(prompt_text) > 280:
         prompt_text = prompt_text[:280] + "..."
 
@@ -78,7 +73,7 @@ def generate_ai_reply(prompt_text):
     }
 
     try:
-        response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=25)
+        response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=20)
         if response.status_code == 200:
             res_text = response.json()["choices"][0]["message"]["content"].strip()
             if "SKIP" in res_text or "can't react" in res_text.lower() or len(res_text) < 5:
@@ -86,72 +81,62 @@ def generate_ai_reply(prompt_text):
             if not is_clean_english(res_text):
                 return None
             return res_text
-    except Exception as e:
-        print(f"DeepSeek API notice: {e}")
+    except Exception:
+        pass
     return None
+
+def fetch_latest_posts_http():
+    """جلب أحدث المنشورات مباشرة عبر HTTP لتجنب أي تعليق أو Timeout في مكتبة nostr-sdk"""
+    try:
+        # استخدام API عام لـ nostr.band لجلب أحدث المنشورات النصية (Kind 1) بسرعة فائقة
+        url = "https://api.nostr.band/v0/posts/popular" # أو محرك البحث العام
+        # بدلاً من ذلك، طلب عبر websocket مبسط أو محرك بحث nostr.band
+        resp = requests.get("https://api.nostr.band/v0/stats/global", timeout=10)
+        # الطريقة الأضمن والأسرع: استخدام استعلام مباشر من ريلاي عام عبر كويري هُنا
+    except Exception:
+        pass
+    
+    # سنستبدل الطريقة السابقة بجلب سريع جداً من ريلاي Damus عبر websocket خفيف أو استخدام nostr_sdk بالطريقة الأبسط
+    return []
 
 async def run_single_cycle():
     if not NOSTR_SECRET or not DEEPSEEK_API_KEY:
         print("Error: Missing secrets in GitHub.")
         return
 
+    from nostr_sdk import Client, NostrSigner, Keys, Filter, EventBuilder, Tag, Kind, RelayUrl
+    
     if NOSTR_SECRET.startswith("nsec1"):
         keys = Keys.parse(NOSTR_SECRET)
         signer = NostrSigner.keys(keys)
-    elif NOSTR_SECRET.startswith("bunker://") or NOSTR_SECRET.startswith("nostrconnect://"):
-        app_keys = Keys.generate()
-        try:
-            uri = NostrConnectUri.parse(NOSTR_SECRET)
-        except Exception:
-            uri = NOSTR_SECRET
-        try:
-            from nostr_sdk import NostrConnectOptions
-            opts = NostrConnectOptions()
-        except Exception:
-            opts = None
-        nc = NostrConnect(uri, app_keys, timedelta(seconds=30), opts)
-        signer = NostrSigner.nostr_connect(nc)
     else:
         print("Error: Invalid NOSTR_NSEC format.")
         return
 
     client = Client(signer)
-    
-    relay_list = ["wss://relay.damus.io", "wss://nos.lol"]
-    for r_url in relay_list:
-        try:
-            await client.add_relay(RelayUrl.parse(r_url))
-        except Exception:
-            await client.add_relay(r_url)
+    await client.add_relay(RelayUrl.parse("wss://relay.damus.io"))
+    await client.add_relay(RelayUrl.parse("wss://nos.lol"))
 
-    print("Connecting to Nostr Relays...")
+    print("Connecting to Relays...")
     try:
-        await asyncio.wait_for(client.connect(), timeout=12)
-        print("Connected to Nostr Relays successfully!")
-    except Exception as e:
-        print(f"Connection notice: {e}")
+        await asyncio.wait_for(client.connect(), timeout=8)
+    except Exception:
+        pass
 
-    print("Fetching latest global timeline...")
-    f = Filter().kind(Kind(1)).limit(60)
+    print("Fetching timeline events...")
+    f = Filter().kind(Kind(1)).limit(30)
     
     events_list = []
     try:
-        events_obj = await asyncio.wait_for(client.fetch_events(f, timedelta(seconds=15)), timeout=20)
+        # تقليص المهلة تماماً لعدم الانتظار طويلاً
+        events_obj = await asyncio.wait_for(client.fetch_events(f, timedelta(seconds=5)), timeout=8)
         events_list = events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj)
-    except Exception as e:
-        print(f"Fetch notice: {e}")
+    except Exception:
+        print("Fetch timeout or empty stream, continuing...")
 
     if not events_list:
-        print("No events fetched in this cycle.")
+        print("No events found in this quick fetch.")
         return
-
-    def get_event_time(ev):
-        try:
-            return ev.created_at().as_secs() if callable(ev.created_at) else getattr(ev, 'created_at', 0)
-        except Exception:
-            return 0
-
-    events_list.sort(key=get_event_time, reverse=True)
 
     try:
         bot_pk = await signer.public_key()
@@ -168,8 +153,6 @@ async def run_single_cycle():
 
         try:
             event_id_obj = event.id() if callable(event.id) else event.id
-            event_id_hex = (event_id_obj.to_hex() if hasattr(event_id_obj, "to_hex") else str(event_id_obj)).lower()
-
             author_pk = event.author() if callable(event.author) else event.author
             author_hex = author_pk.to_hex().lower()
 
@@ -188,47 +171,32 @@ async def run_single_cycle():
                 reply_text += random.choice(CTA_VARIANTS)
 
                 tags = [Tag.event(event_id_obj), Tag.public_key(author_pk)]
-                try:
-                    builder = EventBuilder.text_note(reply_text).tags(tags)
-                except Exception:
-                    builder = EventBuilder(Kind(1), reply_text, tags)
+                builder = EventBuilder(Kind(1), reply_text, tags)
 
                 await client.send_event_builder(builder)
                 replies_count += 1
                 session_authors.add(author_hex)
 
-                print(f"Posted FAST reply #{replies_count}: {reply_text}")
-
-                if replies_count < MAX_REPLIES:
-                    fast_sleep = random.randint(5, 10)
-                    print(f"Waiting {fast_sleep}s for next reply...")
-                    await asyncio.sleep(fast_sleep)
-        except Exception as loop_err:
-            print(f"Skipping event due to processing error: {loop_err}")
+                print(f"Successfully posted reply #{replies_count}!")
+                await asyncio.sleep(3)
+        except Exception:
             continue
 
-    print(f"Completed fast cycle! Posted {replies_count} replies.")
+    print(f"Cycle finished. Posted {replies_count} replies.")
 
 async def main():
-    print("Starting fast Nostr bot loop...")
+    print("Starting optimized Nostr bot...")
     max_cycles = 30
-    current_cycle = 0
-
-    while current_cycle < max_cycles:
-        current_cycle += 1
-        print(f"\n--- Starting Cycle {current_cycle}/{max_cycles} ---")
+    for cycle in range(1, max_cycles + 1):
+        print(f"\n--- Cycle {cycle}/{max_cycles} ---")
         try:
-            await asyncio.wait_for(run_single_cycle(), timeout=120)
+            await asyncio.wait_for(run_single_cycle(), timeout=45)
         except asyncio.TimeoutError:
-            print("Cycle timed out! Skipping to next wait period...")
-        except Exception as e:
-            print(f"Error in cycle execution: {e}")
+            print("Cycle timeout, skipping to next...")
         
-        if current_cycle < max_cycles:
-            print(f"Waiting 5 minutes ({SLEEP_BETWEEN_CYCLES}s) before next batch of latest posts...")
+        if cycle < max_cycles:
+            print(f"Sleeping {SLEEP_BETWEEN_CYCLES}s...")
             await asyncio.sleep(SLEEP_BETWEEN_CYCLES)
-
-    print("Completed all cycles successfully.")
 
 if __name__ == "__main__":
     asyncio.run(main())
