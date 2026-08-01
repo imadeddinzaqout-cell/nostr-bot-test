@@ -53,6 +53,10 @@ def generate_ai_reply(prompt_text):
     if not prompt_text or len(prompt_text.strip()) < 5:
         return None
 
+    # اختصار النص تلقائياً إذا كان طويلاً جداً لضمان سرعة الاستجابة وعدم حدوث Timeout
+    if len(prompt_text) > 280:
+        prompt_text = prompt_text[:280] + "..."
+
     headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
     system_instruction = (
         "You are Imad, a genuine human user on Nostr reacting naturally to posts.\n\n"
@@ -73,26 +77,17 @@ def generate_ai_reply(prompt_text):
         "temperature": 0.7
     }
 
-    # إضافة نظام إعادة المحاولة مرتين في حال حدوث Timeout مؤقت من سيرفرات DeepSeek
-    for attempt in range(2):
-        try:
-            response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=25)
-            if response.status_code == 200:
-                res_text = response.json()["choices"][0]["message"]["content"].strip()
-                if "SKIP" in res_text or "can't react" in res_text.lower() or len(res_text) < 5:
-                    return None
-                if not is_clean_english(res_text):
-                    return None
-                return res_text
-        except requests.exceptions.Timeout:
-            if attempt == 0:
-                print("DeepSeek timeout, retrying once...")
-                continue
-            else:
-                print("DeepSeek API retry failed due to timeout.")
-        except Exception as e:
-            print(f"DeepSeek API error: {e}")
-            break
+    try:
+        response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=25)
+        if response.status_code == 200:
+            res_text = response.json()["choices"][0]["message"]["content"].strip()
+            if "SKIP" in res_text or "can't react" in res_text.lower() or len(res_text) < 5:
+                return None
+            if not is_clean_english(res_text):
+                return None
+            return res_text
+    except Exception as e:
+        print(f"DeepSeek API notice: {e}")
     return None
 
 async def run_single_cycle():
