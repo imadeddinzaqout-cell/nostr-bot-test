@@ -15,9 +15,9 @@ NOSTR_SECRET = os.getenv("NOSTR_NSEC", "").strip()
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 
 MAX_REPLIES = 10  # 10 تعليقات لكل دورة
-SLEEP_BETWEEN_CYCLES = 600  # 10 دقائق انتظار بين الدورات (600 ثانية)
+SLEEP_BETWEEN_CYCLES = 300  # 5 دقائق انتظار بين الدورات الكبيرة
 
-# عبارات CTA مخصصة لشبكة Nostr تعتمد على الـ Zaps بدون روابط خارجية
+# عبارات Zaps سريعة وإنسانية
 CTA_VARIANTS = [
     "\n\n(If you'd like to support my family in Gaza, even a small zap means the world to us 🙏⚡)",
     "\n\n(Every small zap helps my family rebuild and stay safe ❤️⚡)",
@@ -49,6 +49,18 @@ def is_spam(text):
     if len(re.findall(r'https?://\S+', text)) >= 2:
         return True
     return any(kw in text_lower for kw in ["solana", "trycloudflare", "kill-fee", "moneymaker", "airdrop", "presale", "telegram"])
+
+def is_reply_or_quote(event):
+    """استبعاد الردود والاقتباسات للتركيز على المنشورات الأصلية فقط"""
+    try:
+        tags_iter = event.tags() if callable(event.tags) else event.tags
+        for t in tags_iter:
+            vec = t.as_vec() if hasattr(t, "as_vec") else list(t)
+            if len(vec) >= 1 and str(vec[0]).lower() == 'e':
+                return True
+    except Exception:
+        pass
+    return False
 
 def generate_ai_reply(prompt_text):
     if not prompt_text or len(prompt_text.strip()) < 5:
@@ -87,7 +99,7 @@ def generate_ai_reply(prompt_text):
     return None
 
 async def run_single_cycle():
-    """دورة واحدة من البحث والنشر (10 ردود تعتمد على Zaps)"""
+    """دورة سريعة لجلب أحدث المنشورات على المنصة في هذه اللحظة"""
     if not NOSTR_SECRET or not DEEPSEEK_API_KEY:
         print("Error: Missing secrets in GitHub.")
         return
@@ -113,7 +125,13 @@ async def run_single_cycle():
         return
 
     client = Client(signer)
-    relay_list = ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"]
+    relay_list = [
+        "wss://relay.damus.io", 
+        "wss://nos.lol", 
+        "wss://relay.primal.net",
+        "wss://relay.nostr.band",
+        "wss://purplepag.es"
+    ]
     for r in relay_list:
         try:
             await client.add_relay(RelayUrl.parse(r))
@@ -152,7 +170,8 @@ async def run_single_cycle():
             except Exception:
                 pass
 
-    f = Filter().kind(Kind(1)).limit(200)
+    # جلب أحدث 300 منشور على الشبكة
+    f = Filter().kind(Kind(1)).limit(300)
     try:
         events_obj = await client.fetch_events(f, timedelta(seconds=10))
         events_list = events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj)
@@ -164,7 +183,15 @@ async def run_single_cycle():
         print("No events found.")
         return
 
-    random.shuffle(events_list)
+    # ترتيب المنشورات زمنياً من الأحدث إلى الأقدم فوراً
+    def get_event_time(ev):
+        try:
+            return ev.created_at().as_secs() if callable(ev.created_at) else getattr(ev, 'created_at', 0)
+        except Exception:
+            return 0
+
+    events_list.sort(key=get_event_time, reverse=True)
+
     replies_count = 0
     session_authors = set()
 
@@ -181,6 +208,7 @@ async def run_single_cycle():
         if bot_hex and author_hex == bot_hex: continue
         if event_id_hex in already_replied_events: continue
         if author_hex in session_authors or author_hex in already_replied_authors: continue
+        if is_reply_or_quote(event): continue  # التأكد أنه منشور أصلي
 
         content = event.content() if callable(event.content) else event.content
         clean_content = content.strip() if content else ""
@@ -205,19 +233,19 @@ async def run_single_cycle():
             already_replied_authors.add(author_hex)
             already_replied_events.add(event_id_hex)
 
-            print(f"Posted reply #{replies_count}: {reply_text}")
+            print(f"Posted FAST reply #{replies_count}: {reply_text}")
 
             if replies_count < MAX_REPLIES:
-                # الانتظار الطبيعي بين 45 إلى 90 ثانية بين الرد والآخر
-                sleep_time = random.randint(45, 90)
-                print(f"Waiting {sleep_time} seconds before next reply...")
-                await asyncio.sleep(sleep_time)
+                # التأخير السريع: من 5 إلى 10 ثوانٍ فقط
+                fast_sleep = random.randint(5, 10)
+                print(f"Waiting {fast_sleep}s for next reply...")
+                await asyncio.sleep(fast_sleep)
 
-    print(f"Completed cycle! Posted {replies_count} replies.")
+    print(f"Completed fast cycle! Posted {replies_count} replies.")
 
 async def main():
-    print("Starting controlled bot loop...")
-    max_cycles = 30  # 30 دورة تفصل بينها 10 دقائق
+    print("Starting fast Nostr bot loop...")
+    max_cycles = 30
     current_cycle = 0
 
     while current_cycle < max_cycles:
@@ -229,10 +257,10 @@ async def main():
             print(f"Error in cycle execution: {e}")
         
         if current_cycle < max_cycles:
-            print(f"Waiting for 10 minutes ({SLEEP_BETWEEN_CYCLES} seconds) before the next cycle...")
+            print(f"Waiting 5 minutes ({SLEEP_BETWEEN_CYCLES}s) before next batch of latest posts...")
             await asyncio.sleep(SLEEP_BETWEEN_CYCLES)
 
-    print("Completed 30 cycles successfully. Exiting cleanly.")
+    print("Completed all cycles successfully.")
 
 if __name__ == "__main__":
     asyncio.run(main())
