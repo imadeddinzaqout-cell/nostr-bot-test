@@ -112,26 +112,28 @@ async def run_single_cycle():
 
     client = Client(signer)
     
-    relay_url_str = "wss://relay.damus.io"
-    try:
-        await client.add_relay(RelayUrl.parse(relay_url_str))
-    except Exception:
-        await client.add_relay(relay_url_str)
+    # ربط ريلايين رئيسيين لضمان سرعة وضمان استقبال المنشورات فوراً
+    relay_list = ["wss://relay.damus.io", "wss://nos.lol"]
+    for r_url in relay_list:
+        try:
+            await client.add_relay(RelayUrl.parse(r_url))
+        except Exception:
+            await client.add_relay(r_url)
 
-    print("Connecting to Nostr Relay...")
+    print("Connecting to Nostr Relays...")
     try:
-        await asyncio.wait_for(client.connect(), timeout=10)
-        print("Connected to Nostr Relay successfully!")
+        await asyncio.wait_for(client.connect(), timeout=12)
+        print("Connected to Nostr Relays successfully!")
     except Exception as e:
         print(f"Connection notice: {e}")
 
     print("Fetching latest global timeline...")
-    f = Filter().kind(Kind(1)).limit(40)
+    f = Filter().kind(Kind(1)).limit(50)
     
     events_list = []
     try:
-        # استخدام fetch_events المعتمدة مع مهلة زمنية دقيقة لضمان الجلب السليم
-        events_obj = await asyncio.wait_for(client.fetch_events(f, timedelta(seconds=10)), timeout=15)
+        # زيادة مهلة الجلب إلى 15 ثانية لضمان استقبال المنشورات من الريلايين بدقة
+        events_obj = await asyncio.wait_for(client.fetch_events(f, timedelta(seconds=15)), timeout=18)
         events_list = events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj)
     except Exception as e:
         print(f"Fetch notice: {e}")
@@ -213,7 +215,7 @@ async def main():
         current_cycle += 1
         print(f"\n--- Starting Cycle {current_cycle}/{max_cycles} ---")
         try:
-            await asyncio.wait_for(run_single_cycle(), timeout=90)
+            await asyncio.wait_for(run_single_cycle(), timeout=100)
         except asyncio.TimeoutError:
             print("Cycle timed out! Skipping to next wait period...")
         except Exception as e:
