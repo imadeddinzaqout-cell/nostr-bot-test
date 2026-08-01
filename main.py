@@ -84,7 +84,7 @@ def generate_ai_reply(prompt_text):
         "temperature": 0.7
     }
     try:
-        response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=35)
+        response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=30)
         if response.status_code == 200:
             res_text = response.json()["choices"][0]["message"]["content"].strip()
             if "SKIP" in res_text or "can't react" in res_text.lower() or len(res_text) < 5:
@@ -125,7 +125,8 @@ async def run_single_cycle():
     
     relay_list = [
         "wss://relay.damus.io", 
-        "wss://nos.lol"
+        "wss://nos.lol",
+        "wss://relay.primal.net"
     ]
     for r in relay_list:
         try:
@@ -143,28 +144,29 @@ async def run_single_cycle():
         bot_pk = None
 
     bot_hex = bot_pk.to_hex().lower() if bot_pk else ""
-    already_replied_events = set()
-    already_replied_authors = set()
+    events_list = []
 
     print("Fetching latest global timeline...")
-    f = Filter().kind(Kind(1)).limit(50)
+    f = Filter().kind(Kind(1)).limit(30)
     
     try:
-        # رفع المهلة الداخلية إلى 15 ثانية والمهلة الكلية إلى 25 ثانية لضمان جلب البيانات برياحة
-        async def fetch_posts():
-            obj = await client.fetch_events(f, timedelta(seconds=15))
-            return obj.to_vec() if hasattr(obj, "to_vec") else list(obj)
-
-        events_list = await asyncio.wait_for(fetch_posts(), timeout=25)
-    except asyncio.TimeoutError:
-        print("Fetch events timed out internally!")
-        return
+        # استخدام طلب مباشر ومبسط جداً مع مهلة قصيرة لا تتسبب في تعليق البوت
+        events_obj = await client.fetch_events(f, timedelta(seconds=8))
+        events_list = events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj)
     except Exception as e:
-        print(f"Error fetching events: {e}")
-        return
+        print(f"Fetch events notice: {e}")
 
     if not events_list:
-        print("No events found.")
+        print("No events fetched from client, trying alternative relay query...")
+        try:
+            # طريقة بديلة في حال فشل الجلب المباشر لتفادي التايم آوت
+            events_obj = await client.get_events_of([f], timedelta(seconds=8))
+            events_list = events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj)
+        except Exception as ex:
+            print(f"Alternative fetch failed: {ex}")
+
+    if not events_list:
+        print("No events found in this cycle.")
         return
 
     def get_event_time(ev):
@@ -231,7 +233,7 @@ async def main():
         current_cycle += 1
         print(f"\n--- Starting Cycle {current_cycle}/{max_cycles} ---")
         try:
-            await asyncio.wait_for(run_single_cycle(), timeout=90)
+            await asyncio.wait_for(run_single_cycle(), timeout=100)
         except asyncio.TimeoutError:
             print("Cycle timed out! Skipping to next wait period...")
         except Exception as e:
