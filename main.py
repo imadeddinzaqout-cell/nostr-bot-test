@@ -5,7 +5,7 @@ import asyncio
 import requests
 from datetime import timedelta
 from nostr_sdk import (
-    Client, NostrSigner, Keys, Filter, EventBuilder, Tag, Kind, NostrConnect, NostrConnectUri
+    Client, NostrSigner, Keys, Filter, EventBuilder, Tag, Kind, NostrConnect, NostrConnectUri, RelayUrl
 )
 import sys
 sys.stdout.reconfigure(line_buffering=True)
@@ -97,6 +97,44 @@ def generate_ai_reply(prompt_text):
         print(f"Error calling DeepSeek API: {e}")
     return None
 
+async def fetch_events_safe(client, f, timeout):
+    """دالة مرنة وآمنة لجلب المنشورات تتوافق مع مختلف إصدارات مكتبة nostr-sdk"""
+    for method_name in ['get_events_of', 'fetch_events', 'req_events_of']:
+        if hasattr(client, method_name):
+            func = getattr(client, method_name)
+            try:
+                res = func([f], timeout)
+                if asyncio.iscoroutine(res):
+                    res = await res
+                return res
+            except Exception:
+                try:
+                    res = func(f, timeout)
+                    if asyncio.iscoroutine(res):
+                        res = await res
+                    return res
+                except Exception:
+                    pass
+    if hasattr(client, 'database'):
+        db = client.database()
+        for method_name in ['get_events_of', 'query', 'fetch_events']:
+            if hasattr(db, method_name):
+                func = getattr(db, method_name)
+                try:
+                    res = func([f])
+                    if asyncio.iscoroutine(res):
+                        res = await res
+                    return res
+                except Exception:
+                    try:
+                        res = func(f)
+                        if asyncio.iscoroutine(res):
+                            res = await res
+                        return res
+                    except Exception:
+                        pass
+    return []
+
 async def run_single_cycle():
     """دورة سريعة لجلب أحدث المنشورات على المنصة في هذه اللحظة"""
     if not NOSTR_SECRET or not DEEPSEEK_API_KEY:
@@ -133,7 +171,6 @@ async def run_single_cycle():
     ]
     for r in relay_list:
         try:
-            from nostr_sdk import RelayUrl
             await client.add_relay(RelayUrl.parse(r))
         except Exception:
             await client.add_relay(r)
@@ -153,8 +190,7 @@ async def run_single_cycle():
     if bot_pk:
         history_filter = Filter().author(bot_pk).kind(Kind(1)).limit(500)
         try:
-            # تم التصحيح هنا إلى get_events_of ووضع الفلتر داخل قائمة []
-            history_obj = await client.get_events_of([history_filter], timedelta(seconds=12))
+            history_obj = await fetch_events_safe(client, history_filter, timedelta(seconds=12))
             history_list = history_obj.to_vec() if hasattr(history_obj, "to_vec") else list(history_obj)
         except Exception:
             history_list = []
@@ -174,8 +210,7 @@ async def run_single_cycle():
     # جلب أحدث 300 منشور على الشبكة
     f = Filter().kind(Kind(1)).limit(300)
     try:
-        # تم التصحيح هنا أيضاً إلى get_events_of ووضع الفلتر داخل قائمة []
-        events_obj = await client.get_events_of([f], timedelta(seconds=10))
+        events_obj = await fetch_events_safe(client, f, timedelta(seconds=10))
         events_list = events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj)
     except Exception as e:
         print(f"Error fetching events: {e}")
