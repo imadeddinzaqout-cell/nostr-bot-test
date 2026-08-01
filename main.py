@@ -14,16 +14,21 @@ sys.stdout.reconfigure(line_buffering=True)
 NOSTR_SECRET = os.getenv("NOSTR_NSEC", "").strip()
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 
+# ==========================================
+# حسابك الأساسي لتجنب الرد عليه
+# ==========================================
+MAIN_ACCOUNT_PUBKEY = "ضع_مفتاحك_الأساسي_هنا_بصيغة_hex" 
+
 MAX_REPLIES = 10  # 10 تعليقات لكل دورة
 SLEEP_BETWEEN_CYCLES = 300  # 5 دقائق انتظار بين الدورات الكبيرة
 
-# عبارات Zaps سريعة وإنسانية
+# عبارات منوعة تتضمن الزابس ورابط حملتك لتجنب الحظر (Spam)
 CTA_VARIANTS = [
-    "\n\n(If you'd like to support my family in Gaza, even a small zap means the world to us 🙏⚡)",
+    "\n\n(If you'd like to support my family in Gaza, even a small zap or donation means the world to us 🙏 https://chuffed.org/project/125341-urgent-appeal-help-the-family-of-aya-and-imad)",
     "\n\n(Every small zap helps my family rebuild and stay safe ❤️⚡)",
-    "\n\n(Feel free to send a small zap if you wish to support my family in Gaza 🙏⚡)",
+    "\n\n(Feel free to send a small zap or check our family campaign if you wish to support us in Gaza 🙏 https://chuffed.org/project/125341-urgent-appeal-help-the-family-of-aya-and-imad)",
     "\n\n(A small zap can make a huge difference for my family right now ⚡❤️)",
-    "\n\n(If you feel moved to help, any small zap is deeply appreciated 🙏⚡)"
+    "\n\n(If you feel moved to help, any support to our campaign is deeply appreciated 🙏 https://chuffed.org/project/125341-urgent-appeal-help-the-family-of-aya-and-imad)"
 ]
 
 def is_clean_english(text):
@@ -68,12 +73,12 @@ def generate_ai_reply(prompt_text):
 
     headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
     system_instruction = (
-        "You are Imad, a genuine human user on Nostr reacting naturally to posts.\n\n"
+        "You are Imad, a genuine human user on Ditto (a decentralized social app) reacting naturally to posts.\n\n"
         "RULES:\n"
         "1. MUST respond ONLY in natural English. NEVER use Japanese, Chinese, or non-English scripts.\n"
         "2. Keep your reply to 1 concise, direct, and empathetic human sentence reacting strictly to what the author wrote.\n"
         "3. NEVER use generic bot phrases like 'I completely agree', 'Great perspective', 'Thank you for sharing'.\n"
-        "4. Do NOT mention Gaza, donations, or zaps in your main response text.\n"
+        "4. Do NOT mention Gaza, donations, or zaps in your main response text (it will be added automatically later).\n"
         "5. If the post is non-English, empty, automated code, pure media links without text, or total nonsense, respond ONLY with: SKIP"
     )
 
@@ -99,7 +104,7 @@ def generate_ai_reply(prompt_text):
     return None
 
 async def run_single_cycle():
-    """دورة سريعة لجلب أحدث المنشورات على المنصة في هذه اللحظة"""
+    """دورة سريعة لجلب أحدث المنشورات على منصة Ditto"""
     if not NOSTR_SECRET or not DEEPSEEK_API_KEY:
         print("Error: Missing secrets in GitHub.")
         return
@@ -125,13 +130,15 @@ async def run_single_cycle():
         return
 
     client = Client(signer)
+    
+    # ==========================================
+    # التركيز حصرياً على خوادم Ditto
+    # ==========================================
     relay_list = [
-        "wss://relay.damus.io", 
-        "wss://nos.lol", 
-        "wss://relay.primal.net",
-        "wss://relay.nostr.band",
-        "wss://purplepag.es"
+        "wss://relay.ditto.pub",  # الخادم الأساسي لـ Ditto
+        "wss://nos.lol"           # خادم مساعد يستخدمه مجتمع Ditto بكثرة
     ]
+    
     for r in relay_list:
         try:
             await client.add_relay(RelayUrl.parse(r))
@@ -139,7 +146,7 @@ async def run_single_cycle():
             await client.add_relay(r)
 
     await client.connect()
-    print("Connected to Nostr Relays!")
+    print("Connected to Ditto Relays!")
 
     try:
         bot_pk = await signer.public_key()
@@ -183,7 +190,6 @@ async def run_single_cycle():
         print("No events found.")
         return
 
-    # ترتيب المنشورات زمنياً من الأحدث إلى الأقدم فوراً
     def get_event_time(ev):
         try:
             return ev.created_at().as_secs() if callable(ev.created_at) else getattr(ev, 'created_at', 0)
@@ -205,10 +211,13 @@ async def run_single_cycle():
         author_pk = event.author() if callable(event.author) else event.author
         author_hex = author_pk.to_hex().lower()
 
+        # تجاوز حساب البوت، وحسابك الأساسي (Blacklist)
         if bot_hex and author_hex == bot_hex: continue
+        if author_hex == MAIN_ACCOUNT_PUBKEY.lower(): continue
+        
         if event_id_hex in already_replied_events: continue
         if author_hex in session_authors or author_hex in already_replied_authors: continue
-        if is_reply_or_quote(event): continue  # التأكد أنه منشور أصلي
+        if is_reply_or_quote(event): continue
 
         content = event.content() if callable(event.content) else event.content
         clean_content = content.strip() if content else ""
@@ -233,18 +242,17 @@ async def run_single_cycle():
             already_replied_authors.add(author_hex)
             already_replied_events.add(event_id_hex)
 
-            print(f"Posted FAST reply #{replies_count}: {reply_text}")
+            print(f"Posted FAST reply #{replies_count} on Ditto: {reply_text}")
 
             if replies_count < MAX_REPLIES:
-                # التأخير السريع: من 5 إلى 10 ثوانٍ فقط
                 fast_sleep = random.randint(5, 10)
                 print(f"Waiting {fast_sleep}s for next reply...")
                 await asyncio.sleep(fast_sleep)
 
-    print(f"Completed fast cycle! Posted {replies_count} replies.")
+    print(f"Completed fast cycle! Posted {replies_count} replies on Ditto.")
 
 async def main():
-    print("Starting fast Nostr bot loop...")
+    print("Starting fast Ditto bot loop...")
     max_cycles = 30
     current_cycle = 0
 
