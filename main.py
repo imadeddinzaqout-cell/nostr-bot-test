@@ -11,7 +11,7 @@ NOSTR_SECRET = os.getenv("NOSTR_NSEC", "").strip()
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 
 MAX_REPLIES = 5  
-SLEEP_BETWEEN_CYCLES = 60  
+SLEEP_BETWEEN_CYCLES = 30  # تقليص وقت الانتظار بين الدورات لزيادة سرعة التفاعل
 
 CTA_VARIANTS = [
     "\n\n(If you'd like to support my family in Gaza, even a small zap means the world to us 🙏⚡)",
@@ -24,29 +24,27 @@ CTA_VARIANTS = [
 def is_clean_english(text):
     if not text:
         return False
-    cjk_pattern = re.compile(r'[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uffef\u4e00-\u9faf\uac00-\ud7af]')
-    if cjk_pattern.search(text):
-        return False
+    # تخفيف شروط الفلترة لضمان قبول النصوص القصيرة والتفاعلية بسهولة
     latin_chars = len(re.findall(r'[a-zA-Z0-9\s.,!?\'"\-]', text))
     total_chars = len(text)
-    return total_chars > 0 and (latin_chars / total_chars) >= 0.65
+    return total_chars > 0 and (latin_chars / total_chars) >= 0.50
 
 def contains_video(text):
     text_lower = text.lower()
     video_extensions = r'\.(mp4|m3u8|mov|webm|avi|mkv|flv|wmv)(\?|\s|$)'
     if re.search(video_extensions, text_lower):
         return True
-    video_domains = ["youtube.com", "youtu.be", "vimeo.com", "tiktok.com", "rumble.com", "bitchute.com", "nostr.build/av/", "video/"]
+    video_domains = ["youtube.com", "youtu.be", "vimeo.com", "tiktok.com", "rumble.com", "bitchute.com", "nostr.build/av/"]
     return any(domain in text_lower for domain in video_domains)
 
 def is_spam(text):
     text_lower = text.lower()
-    if len(re.findall(r'https?://\S+', text)) >= 2:
+    if len(re.findall(r'https?://\S+', text)) >= 3:
         return True
-    return any(kw in text_lower for kw in ["solana", "trycloudflare", "kill-fee", "moneymaker", "airdrop", "presale", "telegram"])
+    return any(kw in text_lower for kw in ["solana", "trycloudflare", "kill-fee", "moneymaker", "airdrop", "presale"])
 
 def generate_ai_reply(prompt_text):
-    if not prompt_text or len(prompt_text.strip()) < 5:
+    if not prompt_text or len(prompt_text.strip()) < 4:
         return None
 
     if len(prompt_text) > 280:
@@ -56,11 +54,11 @@ def generate_ai_reply(prompt_text):
     system_instruction = (
         "You are Imad, a genuine human user on Nostr reacting naturally to posts.\n\n"
         "RULES:\n"
-        "1. MUST respond ONLY in natural English. NEVER use Japanese, Chinese, or non-English scripts.\n"
+        "1. MUST respond ONLY in natural English.\n"
         "2. Keep your reply to 1 concise, direct, and empathetic human sentence reacting strictly to what the author wrote.\n"
         "3. NEVER use generic bot phrases like 'I completely agree', 'Great perspective', 'Thank you for sharing'.\n"
         "4. Do NOT mention Gaza, donations, or zaps in your main response text.\n"
-        "5. If the post is non-English, empty, automated code, pure media links without text, or total nonsense, respond ONLY with: SKIP"
+        "5. If the post is completely empty, automated code, pure media links without text, or total nonsense, respond ONLY with: SKIP"
     )
 
     payload = {
@@ -76,9 +74,7 @@ def generate_ai_reply(prompt_text):
         response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=20)
         if response.status_code == 200:
             res_text = response.json()["choices"][0]["message"]["content"].strip()
-            if "SKIP" in res_text or "can't react" in res_text.lower() or len(res_text) < 5:
-                return None
-            if not is_clean_english(res_text):
+            if "SKIP" in res_text or len(res_text) < 4:
                 return None
             return res_text
     except Exception:
@@ -123,8 +119,7 @@ async def run_single_cycle():
         pass
 
     print("Fetching timeline events...")
-    # زيادة عدد المنشورات وزيادة المهلة لضمان جلب محتوى كافٍ
-    f = Filter().kind(Kind(1)).limit(50)
+    f = Filter().kind(Kind(1)).limit(60)
     
     events_list = []
     try:
@@ -163,7 +158,7 @@ async def run_single_cycle():
             content = event.content() if callable(event.content) else event.content
             clean_content = content.strip() if content else ""
 
-            if not clean_content or len(clean_content) < 8: continue
+            if not clean_content or len(clean_content) < 5: continue
             if not is_clean_english(clean_content): continue
             if contains_video(clean_content) or is_spam(clean_content): continue
 
@@ -178,8 +173,8 @@ async def run_single_cycle():
                 replies_count += 1
                 session_authors.add(author_hex)
 
-                print(f"Successfully posted reply #{replies_count}!")
-                await asyncio.sleep(4)
+                print(f"Successfully posted reply #{replies_count}: {reply_text[:50]}...")
+                await asyncio.sleep(3)
         except Exception:
             continue
 
@@ -187,7 +182,7 @@ async def run_single_cycle():
 
 async def main():
     print("Starting optimized Nostr bot...")
-    max_cycles = 30
+    max_cycles = 40
     for cycle in range(1, max_cycles + 1):
         print(f"\n--- Cycle {cycle}/{max_cycles} ---")
         try:
