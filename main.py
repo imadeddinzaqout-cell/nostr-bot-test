@@ -14,10 +14,9 @@ sys.stdout.reconfigure(line_buffering=True)
 NOSTR_SECRET = os.getenv("NOSTR_NSEC", "").strip()
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 
-MAX_REPLIES = 10  # 10 تعليقات لكل دورة
-SLEEP_BETWEEN_CYCLES = 300  # 5 دقائق انتظار بين الدورات الكبيرة
+MAX_REPLIES = 10  
+SLEEP_BETWEEN_CYCLES = 300  
 
-# عبارات Zaps سريعة وإنسانية
 CTA_VARIANTS = [
     "\n\n(If you'd like to support my family in Gaza, even a small zap means the world to us 🙏⚡)",
     "\n\n(Every small zap helps my family rebuild and stay safe ❤️⚡)",
@@ -51,7 +50,6 @@ def is_spam(text):
     return any(kw in text_lower for kw in ["solana", "trycloudflare", "kill-fee", "moneymaker", "airdrop", "presale", "telegram"])
 
 def is_reply_or_quote(event):
-    """استبعاد الردود والاقتباسات للتركيز على المنشورات الأصلية فقط"""
     try:
         tags_iter = event.tags() if callable(event.tags) else event.tags
         for t in tags_iter:
@@ -99,7 +97,6 @@ def generate_ai_reply(prompt_text):
     return None
 
 async def run_single_cycle():
-    """دورة سريعة لجلب أحدث المنشورات على المنصة في هذه اللحظة"""
     if not NOSTR_SECRET or not DEEPSEEK_API_KEY:
         print("Error: Missing secrets in GitHub.")
         return
@@ -126,12 +123,10 @@ async def run_single_cycle():
 
     client = Client(signer)
     
-    # الاكتفاء بأسرع وأكثر الـ Relays استقراراً لتجنب التايم آوت
+    # استخدام ريلاي أساسي واحد أو اثنين لضمان سرعة الاستجابة القصوى وعدم حدوث تداخل
     relay_list = [
         "wss://relay.damus.io", 
-        "wss://nos.lol", 
-        "wss://relay.primal.net",
-        "wss://relay.nostr.band"
+        "wss://nos.lol"
     ]
     for r in relay_list:
         try:
@@ -139,8 +134,9 @@ async def run_single_cycle():
         except Exception:
             await client.add_relay(r)
 
+    print("Connecting to Nostr Relays...")
     await client.connect()
-    print("Connected to Nostr Relays!")
+    print("Connected to Nostr Relays successfully!")
 
     try:
         bot_pk = await signer.public_key()
@@ -151,31 +147,20 @@ async def run_single_cycle():
     already_replied_events = set()
     already_replied_authors = set()
 
-    if bot_pk:
-        history_filter = Filter().author(bot_pk).kind(Kind(1)).limit(200)
-        try:
-            history_obj = await client.fetch_events(history_filter, timedelta(seconds=5))
-            history_list = history_obj.to_vec() if hasattr(history_obj, "to_vec") else list(history_obj)
-        except Exception:
-            history_list = []
-
-        for h_event in history_list:
-            try:
-                tags_iter = h_event.tags() if callable(h_event.tags) else h_event.tags
-                for t in tags_iter:
-                    vec = t.as_vec() if hasattr(t, "as_vec") else list(t)
-                    if len(vec) >= 2:
-                        tag_type, tag_val = str(vec[0]).lower(), str(vec[1]).lower()
-                        if tag_type == 'e': already_replied_events.add(tag_val)
-                        elif tag_type == 'p': already_replied_authors.add(tag_val)
-            except Exception:
-                pass
-
-    # جلب أحدث 150 منشور بمهلة 5 ثوانٍ لضمان السرعة ومنع التعليق
-    f = Filter().kind(Kind(1)).limit(150)
+    # تخطي جلب التاريخ الثقيل تماماً إذا كان يسبب تعليقاً، والاعتماد على منع تكرار الجلسة الحالية فقط
+    print("Fetching latest global timeline...")
+    f = Filter().kind(Kind(1)).limit(50)
+    
     try:
-        events_obj = await client.fetch_events(f, timedelta(seconds=5))
-        events_list = events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj)
+        # استخدام asyncio.wait_for لعملية جلب المنشورات لمنع التعليق نهائياً
+        async def fetch_posts():
+            obj = await client.fetch_events(f, timedelta(seconds=4))
+            return obj.to_vec() if hasattr(obj, "to_vec") else list(obj)
+
+        events_list = await asyncio.wait_for(fetch_posts(), timeout=8)
+    except asyncio.TimeoutError:
+        print("Fetch events timed out internally!")
+        return
     except Exception as e:
         print(f"Error fetching events: {e}")
         return
@@ -184,7 +169,6 @@ async def run_single_cycle():
         print("No events found.")
         return
 
-    # ترتيب المنشورات زمنياً من الأحدث إلى الأقدم فوراً
     def get_event_time(ev):
         try:
             return ev.created_at().as_secs() if callable(ev.created_at) else getattr(ev, 'created_at', 0)
@@ -207,9 +191,8 @@ async def run_single_cycle():
         author_hex = author_pk.to_hex().lower()
 
         if bot_hex and author_hex == bot_hex: continue
-        if event_id_hex in already_replied_events: continue
-        if author_hex in session_authors or author_hex in already_replied_authors: continue
-        if is_reply_or_quote(event): continue  # التأكد أنه منشور أصلي
+        if author_hex in session_authors: continue
+        if is_reply_or_quote(event): continue  
 
         content = event.content() if callable(event.content) else event.content
         clean_content = content.strip() if content else ""
@@ -231,8 +214,6 @@ async def run_single_cycle():
             await client.send_event_builder(builder)
             replies_count += 1
             session_authors.add(author_hex)
-            already_replied_authors.add(author_hex)
-            already_replied_events.add(event_id_hex)
 
             print(f"Posted FAST reply #{replies_count}: {reply_text}")
 
@@ -252,8 +233,7 @@ async def main():
         current_cycle += 1
         print(f"\n--- Starting Cycle {current_cycle}/{max_cycles} ---")
         try:
-            # تغليف الدورة بمهلة أقصاها دقيقتان لمنع التعليق الدائم
-            await asyncio.wait_for(run_single_cycle(), timeout=120)
+            await asyncio.wait_for(run_single_cycle(), timeout=60)
         except asyncio.TimeoutError:
             print("Cycle timed out! Skipping to next wait period...")
         except Exception as e:
