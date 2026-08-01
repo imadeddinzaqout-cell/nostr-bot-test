@@ -86,7 +86,8 @@ def generate_ai_reply(prompt_text):
         "temperature": 0.7
     }
     try:
-        response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=15)
+        # تم رفع الـ timeout إلى 35 ثانية لمنع مشاكل الـ Read timed out
+        response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=35)
         if response.status_code == 200:
             res_text = response.json()["choices"][0]["message"]["content"].strip()
             if "SKIP" in res_text or "can't react" in res_text.lower() or len(res_text) < 5:
@@ -126,14 +127,14 @@ async def run_single_cycle():
 
     client = Client(signer)
     relay_list = [
-    "wss://relay.damus.io", 
-    "wss://nos.lol", 
-    "wss://relay.primal.net",
-    "wss://relay.nostr.band",
-    "wss://purplepag.es",
-    "wss://nostr.wine",
-    "wss://relay.current.fyi"
-]
+        "wss://relay.damus.io", 
+        "wss://nos.lol", 
+        "wss://relay.primal.net",
+        "wss://relay.nostr.band",
+        "wss://purplepag.es",
+        "wss://nostr.wine",
+        "wss://relay.current.fyi"
+    ]
     for r in relay_list:
         try:
             await client.add_relay(RelayUrl.parse(r))
@@ -155,7 +156,8 @@ async def run_single_cycle():
     if bot_pk:
         history_filter = Filter().author(bot_pk).kind(Kind(1)).limit(500)
         try:
-            history_obj = await client.fetch_events(history_filter, timedelta(seconds=12))
+            # تقليص وقت الانتظار لتجنب التعليق
+            history_obj = await client.fetch_events(history_filter, timedelta(seconds=8))
             history_list = history_obj.to_vec() if hasattr(history_obj, "to_vec") else list(history_obj)
         except Exception:
             history_list = []
@@ -172,10 +174,10 @@ async def run_single_cycle():
             except Exception:
                 pass
 
-    # جلب أحدث 300 منشور على الشبكة
+    # جلب أحدث 300 منشور على الشبكة (تخفيض المدة إلى 7 ثوانٍ لسرعة الأداء)
     f = Filter().kind(Kind(1)).limit(300)
     try:
-        events_obj = await client.fetch_events(f, timedelta(seconds=10))
+        events_obj = await client.fetch_events(f, timedelta(seconds=7))
         events_list = events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj)
     except Exception as e:
         print(f"Error fetching events: {e}")
@@ -238,7 +240,6 @@ async def run_single_cycle():
             print(f"Posted FAST reply #{replies_count}: {reply_text}")
 
             if replies_count < MAX_REPLIES:
-                # التأخير السريع: من 5 إلى 10 ثوانٍ فقط
                 fast_sleep = random.randint(5, 10)
                 print(f"Waiting {fast_sleep}s for next reply...")
                 await asyncio.sleep(fast_sleep)
@@ -254,7 +255,10 @@ async def main():
         current_cycle += 1
         print(f"\n--- Starting Cycle {current_cycle}/{max_cycles} ---")
         try:
-            await run_single_cycle()
+            # تغليف الدورة بمهلة أقصاها دقيقتان لمنع التعليق الدائم في حال بطء السيرفرات
+            await asyncio.wait_for(run_single_cycle(), timeout=120)
+        except asyncio.TimeoutError:
+            print("Cycle timed out! Skipping to next wait period...")
         except Exception as e:
             print(f"Error in cycle execution: {e}")
         
