@@ -72,18 +72,27 @@ def generate_ai_reply(prompt_text):
         ],
         "temperature": 0.7
     }
-    try:
-        # زيادة المهلة لـ 35 ثانية لضمان استلام الرد دون تسرع
-        response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=35)
-        if response.status_code == 200:
-            res_text = response.json()["choices"][0]["message"]["content"].strip()
-            if "SKIP" in res_text or "can't react" in res_text.lower() or len(res_text) < 5:
-                return None
-            if not is_clean_english(res_text):
-                return None
-            return res_text
-    except Exception as e:
-        print(f"DeepSeek API notice: {e}")
+
+    # إضافة نظام إعادة المحاولة مرتين في حال حدوث Timeout مؤقت من سيرفرات DeepSeek
+    for attempt in range(2):
+        try:
+            response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=25)
+            if response.status_code == 200:
+                res_text = response.json()["choices"][0]["message"]["content"].strip()
+                if "SKIP" in res_text or "can't react" in res_text.lower() or len(res_text) < 5:
+                    return None
+                if not is_clean_english(res_text):
+                    return None
+                return res_text
+        except requests.exceptions.Timeout:
+            if attempt == 0:
+                print("DeepSeek timeout, retrying once...")
+                continue
+            else:
+                print("DeepSeek API retry failed due to timeout.")
+        except Exception as e:
+            print(f"DeepSeek API error: {e}")
+            break
     return None
 
 async def run_single_cycle():
@@ -179,16 +188,7 @@ async def run_single_cycle():
             if not is_clean_english(clean_content): continue
             if contains_video(clean_content) or is_spam(clean_content): continue
 
-            # استخدام مهلة زمنية مريحة جداً (40 ثانية) لطلب الذكاء الاصطناعي لكل منشور
-            try:
-                reply_text = await asyncio.wait_for(
-                    asyncio.to_thread(generate_ai_reply, clean_content), 
-                    timeout=40
-                )
-            except asyncio.TimeoutError:
-                print(f"DeepSeek request timed out for post ID: {event_id_hex[:8]}")
-                continue
-
+            reply_text = await asyncio.to_thread(generate_ai_reply, clean_content)
             if reply_text:
                 reply_text += random.choice(CTA_VARIANTS)
 
