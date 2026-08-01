@@ -5,8 +5,7 @@ import asyncio
 import requests
 from datetime import timedelta
 from nostr_sdk import (
-    Client, NostrSigner, Keys, Filter, EventBuilder, Tag, Kind,
-    NostrConnect, NostrConnectUri, RelayUrl
+    Client, NostrSigner, Keys, Filter, EventBuilder, Tag, Kind
 )
 import sys
 sys.stdout.reconfigure(line_buffering=True)
