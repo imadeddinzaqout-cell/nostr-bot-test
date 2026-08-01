@@ -118,23 +118,26 @@ async def run_single_cycle():
 
     print("Connecting to Relays...")
     try:
-        await asyncio.wait_for(client.connect(), timeout=8)
+        await asyncio.wait_for(client.connect(), timeout=10)
     except Exception:
         pass
 
     print("Fetching timeline events...")
-    f = Filter().kind(Kind(1)).limit(30)
+    # زيادة عدد المنشورات وزيادة المهلة لضمان جلب محتوى كافٍ
+    f = Filter().kind(Kind(1)).limit(50)
     
     events_list = []
     try:
-        events_obj = await asyncio.wait_for(client.fetch_events(f, timedelta(seconds=5)), timeout=8)
+        events_obj = await asyncio.wait_for(client.fetch_events(f, timedelta(seconds=10)), timeout=12)
         events_list = events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj)
     except Exception:
         print("Fetch timeout or empty stream, continuing...")
 
     if not events_list:
-        print("No events found in this quick fetch.")
+        print("No events found in this fetch.")
         return
+
+    print(f"Fetched {len(events_list)} events successfully. Processing...")
 
     try:
         bot_pk = await signer.public_key()
@@ -176,7 +179,7 @@ async def run_single_cycle():
                 session_authors.add(author_hex)
 
                 print(f"Successfully posted reply #{replies_count}!")
-                await asyncio.sleep(3)
+                await asyncio.sleep(4)
         except Exception:
             continue
 
@@ -188,7 +191,7 @@ async def main():
     for cycle in range(1, max_cycles + 1):
         print(f"\n--- Cycle {cycle}/{max_cycles} ---")
         try:
-            await asyncio.wait_for(run_single_cycle(), timeout=45)
+            await asyncio.wait_for(run_single_cycle(), timeout=60)
         except asyncio.TimeoutError:
             print("Cycle timeout, skipping to next...")
         
