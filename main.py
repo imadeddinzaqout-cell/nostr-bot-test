@@ -112,7 +112,6 @@ async def run_single_cycle():
 
     client = Client(signer)
     
-    # استخدام ريلاي واحد سريع ومستقر تماماً
     relay_url_str = "wss://relay.damus.io"
     try:
         await client.add_relay(RelayUrl.parse(relay_url_str))
@@ -131,8 +130,8 @@ async def run_single_cycle():
     
     events_list = []
     try:
-        # استخدام get_events_of مع مهلة مريحة جداً لتفادي أي تعليق
-        events_obj = await asyncio.wait_for(client.get_events_of([f], timedelta(seconds=12)), timeout=15)
+        # استخدام fetch_events المعتمدة مع مهلة زمنية دقيقة لضمان الجلب السليم
+        events_obj = await asyncio.wait_for(client.fetch_events(f, timedelta(seconds=10)), timeout=15)
         events_list = events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj)
     except Exception as e:
         print(f"Fetch notice: {e}")
