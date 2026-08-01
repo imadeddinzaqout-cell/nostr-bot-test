@@ -85,30 +85,29 @@ def generate_ai_reply(prompt_text):
         pass
     return None
 
-def fetch_latest_posts_http():
-    """جلب أحدث المنشورات مباشرة عبر HTTP لتجنب أي تعليق أو Timeout في مكتبة nostr-sdk"""
-    try:
-        # استخدام API عام لـ nostr.band لجلب أحدث المنشورات النصية (Kind 1) بسرعة فائقة
-        url = "https://api.nostr.band/v0/posts/popular" # أو محرك البحث العام
-        # بدلاً من ذلك، طلب عبر websocket مبسط أو محرك بحث nostr.band
-        resp = requests.get("https://api.nostr.band/v0/stats/global", timeout=10)
-        # الطريقة الأضمن والأسرع: استخدام استعلام مباشر من ريلاي عام عبر كويري هُنا
-    except Exception:
-        pass
-    
-    # سنستبدل الطريقة السابقة بجلب سريع جداً من ريلاي Damus عبر websocket خفيف أو استخدام nostr_sdk بالطريقة الأبسط
-    return []
-
 async def run_single_cycle():
     if not NOSTR_SECRET or not DEEPSEEK_API_KEY:
         print("Error: Missing secrets in GitHub.")
         return
 
-    from nostr_sdk import Client, NostrSigner, Keys, Filter, EventBuilder, Tag, Kind, RelayUrl
+    from nostr_sdk import Client, NostrSigner, Keys, Filter, EventBuilder, Tag, Kind, RelayUrl, NostrConnect, NostrConnectUri
     
     if NOSTR_SECRET.startswith("nsec1"):
         keys = Keys.parse(NOSTR_SECRET)
         signer = NostrSigner.keys(keys)
+    elif NOSTR_SECRET.startswith("bunker://") or NOSTR_SECRET.startswith("nostrconnect://"):
+        app_keys = Keys.generate()
+        try:
+            uri = NostrConnectUri.parse(NOSTR_SECRET)
+        except Exception:
+            uri = NOSTR_SECRET
+        try:
+            from nostr_sdk import NostrConnectOptions
+            opts = NostrConnectOptions()
+        except Exception:
+            opts = None
+        nc = NostrConnect(uri, app_keys, timedelta(seconds=30), opts)
+        signer = NostrSigner.nostr_connect(nc)
     else:
         print("Error: Invalid NOSTR_NSEC format.")
         return
@@ -128,7 +127,6 @@ async def run_single_cycle():
     
     events_list = []
     try:
-        # تقليص المهلة تماماً لعدم الانتظار طويلاً
         events_obj = await asyncio.wait_for(client.fetch_events(f, timedelta(seconds=5)), timeout=8)
         events_list = events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj)
     except Exception:
