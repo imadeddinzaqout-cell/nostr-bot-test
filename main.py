@@ -49,17 +49,6 @@ def is_spam(text):
         return True
     return any(kw in text_lower for kw in ["solana", "trycloudflare", "kill-fee", "moneymaker", "airdrop", "presale", "telegram"])
 
-def is_reply_or_quote(event):
-    try:
-        tags_iter = event.tags() if callable(event.tags) else event.tags
-        for t in tags_iter:
-            vec = t.as_vec() if hasattr(t, "as_vec") else list(t)
-            if len(vec) >= 1 and str(vec[0]).lower() == 'e':
-                return True
-    except Exception:
-        pass
-    return False
-
 def generate_ai_reply(prompt_text):
     if not prompt_text or len(prompt_text.strip()) < 5:
         return None
@@ -96,106 +85,110 @@ def generate_ai_reply(prompt_text):
         print(f"Error calling DeepSeek API: {e}")
     return None
 
+def fetch_events_via_http():
+    """جلب أحدث المنشورات باستخدام HTTP REST API لتجنب مشاكل WebSocket Timeout في السيرفرات"""
+    url = "https://relay.dam.io" # بديل سريع أو استخدام nostr.band
+    # استخدام nostr.band للبحث السريع عبر الـ API
+    api_url = "https://api.nostr.band/v0/posts/trending" # أو استعلام مباشر
+    # سنستخدم استعلام مباشر لـ nostr.band أو ريلاي يدعم ن一般的 القراءة
+    try:
+        # محاولة جلب أحدث المنشورات عبر Nostr.band API المخصص للسرعة
+        resp = requests.get("https://api.nostr.band/v0/stats/profiles", timeout=10)
+        # الطريقة الأضمن والأسرع: استخدام Nostr.band search API للمنشورات النصية الطازجة
+        res = requests.get("https://nostr.band/api/v0/top/contacts", timeout=10)
+    except Exception:
+        pass
+
+    # بديل مباشر وبسيط عبر نداء HTTP لـ nostr.band queries
+    events = []
+    try:
+        headers = {'Accept': 'application/json'}
+        # جلب أحدث الـ notes عبر Nostr.band endpoint المخصص
+        r = requests.get("https://api.nostr.band/v0/posts/new", timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            if "posts" in data:
+                for p in data["posts"]:
+                    events.append({
+                        "id": p.get("id"),
+                        "pubkey": p.get("pubkey"),
+                        "content": p.get("content"),
+                        "created_at": p.get("created_at")
+                    })
+    except Exception as e:
+        print(f"HTTP fetch error: {e}")
+    return events
+
 async def run_single_cycle():
     if not NOSTR_SECRET or not DEEPSEEK_API_KEY:
         print("Error: Missing secrets in GitHub.")
         return
 
+    print("Fetching latest global timeline via HTTP API...")
+    raw_posts = fetch_events_via_http()
+    
+    if not raw_posts:
+        print("No events found via HTTP, falling back to direct relay connection...")
+        # الطريقة التقليدية السريعة في حال لم يعمل الـ API
+        if NOSTR_SECRET.startswith("nsec1"):
+            keys = Keys.parse(NOSTR_SECRET)
+            signer = NostrSigner.keys(keys)
+        else:
+            return
+        client = Client(signer)
+        await client.add_relay(RelayUrl.parse("wss://nos.lol"))
+        await client.connect()
+        f = Filter().kind(Kind(1)).limit(30)
+        events_obj = await client.fetch_events(f, timedelta(seconds=5))
+        # تحويل سريع
+        raw_posts = []
+        for ev in events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj):
+            try:
+                raw_posts.append({
+                    "id": ev.id().to_hex() if callable(ev.id) else str(ev.id),
+                    "pubkey": ev.author().to_hex() if callable(ev.author) else str(ev.author),
+                    "content": ev.content() if callable(ev.content) else ev.content,
+                    "created_at": ev.created_at().as_secs() if callable(ev.created_at) else 0
+                })
+            except Exception:
+                continue
+
+    if not raw_posts:
+        print("No events found at all.")
+        return
+
+    # تهيئة العميل للإرسال فقط (بدون انتظار جلب معقد)
     if NOSTR_SECRET.startswith("nsec1"):
         keys = Keys.parse(NOSTR_SECRET)
         signer = NostrSigner.keys(keys)
-    elif NOSTR_SECRET.startswith("bunker://") or NOSTR_SECRET.startswith("nostrconnect://"):
-        app_keys = Keys.generate()
-        try:
-            uri = NostrConnectUri.parse(NOSTR_SECRET)
-        except Exception:
-            uri = NOSTR_SECRET
-        try:
-            from nostr_sdk import NostrConnectOptions
-            opts = NostrConnectOptions()
-        except Exception:
-            opts = None
-        nc = NostrConnect(uri, app_keys, timedelta(seconds=30), opts)
-        signer = NostrSigner.nostr_connect(nc)
     else:
-        print("Error: Invalid NOSTR_NSEC format.")
         return
 
     client = Client(signer)
-    
-    relay_list = [
-        "wss://relay.damus.io", 
-        "wss://nos.lol",
-        "wss://relay.primal.net"
-    ]
-    for r in relay_list:
-        try:
-            await client.add_relay(RelayUrl.parse(r))
-        except Exception:
-            await client.add_relay(r)
-
-    print("Connecting to Nostr Relays...")
+    await client.add_relay(RelayUrl.parse("wss://nos.lol"))
+    await client.add_relay(RelayUrl.parse("wss://relay.damus.io"))
     await client.connect()
-    print("Connected to Nostr Relays successfully!")
 
     try:
         bot_pk = await signer.public_key()
+        bot_hex = bot_pk.to_hex().lower() if bot_pk else ""
     except Exception:
-        bot_pk = None
-
-    bot_hex = bot_pk.to_hex().lower() if bot_pk else ""
-    events_list = []
-
-    print("Fetching latest global timeline...")
-    f = Filter().kind(Kind(1)).limit(30)
-    
-    try:
-        # استخدام طلب مباشر ومبسط جداً مع مهلة قصيرة لا تتسبب في تعليق البوت
-        events_obj = await client.fetch_events(f, timedelta(seconds=8))
-        events_list = events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj)
-    except Exception as e:
-        print(f"Fetch events notice: {e}")
-
-    if not events_list:
-        print("No events fetched from client, trying alternative relay query...")
-        try:
-            # طريقة بديلة في حال فشل الجلب المباشر لتفادي التايم آوت
-            events_obj = await client.get_events_of([f], timedelta(seconds=8))
-            events_list = events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj)
-        except Exception as ex:
-            print(f"Alternative fetch failed: {ex}")
-
-    if not events_list:
-        print("No events found in this cycle.")
-        return
-
-    def get_event_time(ev):
-        try:
-            return ev.created_at().as_secs() if callable(ev.created_at) else getattr(ev, 'created_at', 0)
-        except Exception:
-            return 0
-
-    events_list.sort(key=get_event_time, reverse=True)
+        bot_hex = ""
 
     replies_count = 0
     session_authors = set()
 
-    for event in events_list:
+    for p in raw_posts:
         if replies_count >= MAX_REPLIES:
             break
 
-        event_id_obj = event.id() if callable(event.id) else event.id
-        event_id_hex = (event_id_obj.to_hex() if hasattr(event_id_obj, "to_hex") else str(event_id_obj)).lower()
+        event_id_hex = str(p.get("id", "")).lower()
+        author_hex = str(p.get("pubkey", "")).lower()
+        clean_content = str(p.get("content", "")).strip()
 
-        author_pk = event.author() if callable(event.author) else event.author
-        author_hex = author_pk.to_hex().lower()
-
+        if not event_id_hex or not author_hex: continue
         if bot_hex and author_hex == bot_hex: continue
         if author_hex in session_authors: continue
-        if is_reply_or_quote(event): continue  
-
-        content = event.content() if callable(event.content) else event.content
-        clean_content = content.strip() if content else ""
 
         if not clean_content or len(clean_content) < 8: continue
         if not is_clean_english(clean_content): continue
@@ -205,11 +198,14 @@ async def run_single_cycle():
         if reply_text:
             reply_text += random.choice(CTA_VARIANTS)
 
-            tags = [Tag.event(event_id_obj), Tag.public_key(author_pk)]
             try:
+                from nostr_sdk import EventId, PublicKey
+                event_id_obj = EventId.parse(event_id_hex)
+                author_pk_obj = PublicKey.parse(author_hex)
+                tags = [Tag.event(event_id_obj), Tag.public_key(author_pk_obj)]
                 builder = EventBuilder.text_note(reply_text).tags(tags)
             except Exception:
-                builder = EventBuilder(Kind(1), reply_text, tags)
+                builder = EventBuilder(Kind(1), reply_text, [])
 
             await client.send_event_builder(builder)
             replies_count += 1
@@ -233,7 +229,7 @@ async def main():
         current_cycle += 1
         print(f"\n--- Starting Cycle {current_cycle}/{max_cycles} ---")
         try:
-            await asyncio.wait_for(run_single_cycle(), timeout=100)
+            await asyncio.wait_for(run_single_cycle(), timeout=90)
         except asyncio.TimeoutError:
             print("Cycle timed out! Skipping to next wait period...")
         except Exception as e:
