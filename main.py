@@ -73,7 +73,8 @@ def generate_ai_reply(prompt_text):
         "temperature": 0.7
     }
     try:
-        response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=25)
+        # زيادة المهلة لـ 35 ثانية لضمان استلام الرد دون تسرع
+        response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=35)
         if response.status_code == 200:
             res_text = response.json()["choices"][0]["message"]["content"].strip()
             if "SKIP" in res_text or "can't react" in res_text.lower() or len(res_text) < 5:
@@ -127,11 +128,11 @@ async def run_single_cycle():
         print(f"Connection notice: {e}")
 
     print("Fetching latest global timeline...")
-    f = Filter().kind(Kind(1)).limit(50)
+    f = Filter().kind(Kind(1)).limit(60)
     
     events_list = []
     try:
-        events_obj = await asyncio.wait_for(client.fetch_events(f, timedelta(seconds=15)), timeout=18)
+        events_obj = await asyncio.wait_for(client.fetch_events(f, timedelta(seconds=15)), timeout=20)
         events_list = events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj)
     except Exception as e:
         print(f"Fetch notice: {e}")
@@ -178,8 +179,16 @@ async def run_single_cycle():
             if not is_clean_english(clean_content): continue
             if contains_video(clean_content) or is_spam(clean_content): continue
 
-            # تشغيل توليد الرد مع حماية زمنية لتفادي أي تعليق في المعالجة الفردية
-            reply_text = await asyncio.to_thread(generate_ai_reply, clean_content)
+            # استخدام مهلة زمنية مريحة جداً (40 ثانية) لطلب الذكاء الاصطناعي لكل منشور
+            try:
+                reply_text = await asyncio.wait_for(
+                    asyncio.to_thread(generate_ai_reply, clean_content), 
+                    timeout=40
+                )
+            except asyncio.TimeoutError:
+                print(f"DeepSeek request timed out for post ID: {event_id_hex[:8]}")
+                continue
+
             if reply_text:
                 reply_text += random.choice(CTA_VARIANTS)
 
@@ -214,7 +223,7 @@ async def main():
         current_cycle += 1
         print(f"\n--- Starting Cycle {current_cycle}/{max_cycles} ---")
         try:
-            await asyncio.wait_for(run_single_cycle(), timeout=100)
+            await asyncio.wait_for(run_single_cycle(), timeout=120)
         except asyncio.TimeoutError:
             print("Cycle timed out! Skipping to next wait period...")
         except Exception as e:
