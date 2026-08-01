@@ -126,12 +126,14 @@ async def run_single_cycle():
 
     client = Client(signer)
     relay_list = [
-        "wss://relay.damus.io", 
-        "wss://nos.lol", 
-        "wss://relay.primal.net",
-        "wss://relay.nostr.band",
-        "wss://purplepag.es"
-    ]
+    "wss://relay.damus.io", 
+    "wss://nos.lol", 
+    "wss://relay.primal.net",
+    "wss://relay.nostr.band",
+    "wss://purplepag.es",
+    "wss://nostr.wine",
+    "wss://relay.current.fyi"
+]
     for r in relay_list:
         try:
             await client.add_relay(RelayUrl.parse(r))
