@@ -46,7 +46,7 @@ def generate_ai_reply(prompt_text):
     system_instruction = (
         "You are Imad, a human user on Nostr. Write a friendly, 1-sentence reply in natural English to this post.\n"
         "Do NOT mention Gaza, zaps, or donations in this main sentence.\n"
-        "If the post is unreadable, total spam, or pure code, reply ONLY with: SKIP"
+        "If the post is unreadable, total spam, non-English, or pure code, reply ONLY with: SKIP"
     )
 
     payload = {
@@ -58,12 +58,15 @@ def generate_ai_reply(prompt_text):
         "temperature": 0.7
     }
     try:
-        response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=12)
+        # رفع مهلة الرد إلى 25 ثانية لاستيعاب ضغط سيرفرات DeepSeek
+        response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=25)
         if response.status_code == 200:
             res_text = response.json()["choices"][0]["message"]["content"].strip()
             if "SKIP" in res_text or len(res_text) < 4:
                 return None
             return res_text
+    except requests.exceptions.Timeout:
+        print("DeepSeek API timeout, checking next post...")
     except Exception as e:
         print(f"DeepSeek API Exception: {e}")
     return None
@@ -149,7 +152,7 @@ async def run_single_cycle():
             if not is_valid:
                 continue
 
-            # طلب الرد من الذكاء الاصطناعي
+            # طلب الرد من الذكاء الاصطناعي مع التمهل المناسب
             reply_text = await asyncio.to_thread(generate_ai_reply, clean_content)
             if not reply_text:
                 print(f"AI skipped post: '{clean_content[:30]}...'")
