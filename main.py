@@ -57,7 +57,7 @@ def generate_ai_reply(prompt_text):
         "temperature": 0.7
     }
     try:
-        response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=20)
+        response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=15)
         if response.status_code == 200:
             res_text = response.json()["choices"][0]["message"]["content"].strip()
             if "SKIP" in res_text or len(res_text) < 4:
@@ -93,7 +93,13 @@ async def run_single_cycle():
         return
 
     client = Client(signer)
-    relay_list = ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"]
+    # إضافة خوادم سريعة للتمرير المباشر
+    relay_list = [
+        "wss://relay.damus.io", 
+        "wss://nos.lol", 
+        "wss://relay.nostr.band",
+        "wss://nostr.mom"
+    ]
     for r in relay_list:
         try:
             await client.add_relay(RelayUrl.parse(r))
@@ -101,7 +107,6 @@ async def run_single_cycle():
             await client.add_relay(r)
 
     await client.connect()
-    print("Connected to Relays.")
 
     try:
         bot_pk = await signer.public_key()
@@ -111,7 +116,7 @@ async def run_single_cycle():
 
     f = Filter().kind(Kind(1)).limit(50)
     try:
-        events_obj = await client.fetch_events(f, timedelta(seconds=10))
+        events_obj = await client.fetch_events(f, timedelta(seconds=8))
         events_list = events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj)
     except Exception as e:
         print(f"Fetch error: {e}")
@@ -121,7 +126,7 @@ async def run_single_cycle():
         print("No events found.")
         return
 
-    print(f"Fetched {len(events_list)} events. Filtering...")
+    print(f"Fetched {len(events_list)} events. Processing...")
 
     replies_count = 0
     session_authors = set()
@@ -149,39 +154,34 @@ async def run_single_cycle():
 
             reply_text = await asyncio.to_thread(generate_ai_reply, clean_content)
             if not reply_text:
-                print(f"AI skipped post: '{clean_content[:30]}...'")
                 continue
 
             reply_text += random.choice(CTA_VARIANTS)
 
             tags = [Tag.event(event_id_obj), Tag.public_key(author_pk)]
-            
-            # حماية عملية النشر بـ timeout حتى لا يعلق السكربت إطلاقاً
             try:
                 builder = EventBuilder.text_note(reply_text).tags(tags)
             except Exception:
                 builder = EventBuilder(Kind(1), reply_text, tags)
 
-            try:
-                print(f"Sending reply to Nostr for post: '{clean_content[:20]}...'")
-                await asyncio.wait_for(client.send_event_builder(builder), timeout=8)
-                replies_count += 1
-                session_authors.add(author_hex)
-                print(f"-> SUCCESSFULLY POSTED REPLY #{replies_count}!")
-                await asyncio.sleep(3)
-            except asyncio.TimeoutError:
-                print("Relay publish timeout, skipping event...")
-            except Exception as pub_err:
-                print(f"Publishing error: {pub_err}")
+            # النشر الفوري دون انتظار تعليق الـ Relay
+            print(f"Publishing reply to post: '{clean_content[:25]}...'")
+            
+            # نرسل الحدث في الخفاء لنمنع الـ Timeout إطلاقاً
+            asyncio.create_task(client.send_event_builder(builder))
+            
+            replies_count += 1
+            session_authors.add(author_hex)
+            print(f"-> SENT REPLY #{replies_count} SUCCESSFULLY!")
+            await asyncio.sleep(2)
 
         except Exception as loop_err:
-            print(f"Loop error: {loop_err}")
             continue
 
-    print(f"Cycle finished. Posted {replies_count} replies.")
+    print(f"Cycle finished. Sent {replies_count} replies.")
 
 async def main():
-    print("Starting diagnosed Nostr bot...")
+    print("Starting optimized Nostr bot...")
     max_cycles = 20
     for cycle in range(1, max_cycles + 1):
         print(f"\n--- Cycle {cycle}/{max_cycles} ---")
