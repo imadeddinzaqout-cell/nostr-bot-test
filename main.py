@@ -11,7 +11,7 @@ NOSTR_SECRET = os.getenv("NOSTR_NSEC", "").strip()
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 
 MAX_REPLIES = 5  
-SLEEP_BETWEEN_CYCLES = 30  # تقليص وقت الانتظار بين الدورات لزيادة سرعة التفاعل
+SLEEP_BETWEEN_CYCLES = 30  
 
 CTA_VARIANTS = [
     "\n\n(If you'd like to support my family in Gaza, even a small zap means the world to us 🙏⚡)",
@@ -21,30 +21,17 @@ CTA_VARIANTS = [
     "\n\n(If you feel moved to help, any small zap is deeply appreciated 🙏⚡)"
 ]
 
-def is_clean_english(text):
-    if not text:
+def is_valid_post(text):
+    if not text or len(text.strip()) < 5:
         return False
-    # تخفيف شروط الفلترة لضمان قبول النصوص القصيرة والتفاعلية بسهولة
-    latin_chars = len(re.findall(r'[a-zA-Z0-9\s.,!?\'"\-]', text))
-    total_chars = len(text)
-    return total_chars > 0 and (latin_chars / total_chars) >= 0.50
-
-def contains_video(text):
+    # استبعاد الفيديوهات المباشرة أو الروابط الكثيرة فقط
     text_lower = text.lower()
-    video_extensions = r'\.(mp4|m3u8|mov|webm|avi|mkv|flv|wmv)(\?|\s|$)'
-    if re.search(video_extensions, text_lower):
-        return True
-    video_domains = ["youtube.com", "youtu.be", "vimeo.com", "tiktok.com", "rumble.com", "bitchute.com", "nostr.build/av/"]
-    return any(domain in text_lower for domain in video_domains)
-
-def is_spam(text):
-    text_lower = text.lower()
-    if len(re.findall(r'https?://\S+', text)) >= 3:
-        return True
-    return any(kw in text_lower for kw in ["solana", "trycloudflare", "kill-fee", "moneymaker", "airdrop", "presale"])
+    if "http://kubus" in text_lower or "https://" in text_lower and len(text.split()) < 3:
+        return False
+    return True
 
 def generate_ai_reply(prompt_text):
-    if not prompt_text or len(prompt_text.strip()) < 4:
+    if not prompt_text:
         return None
 
     if len(prompt_text) > 280:
@@ -52,20 +39,17 @@ def generate_ai_reply(prompt_text):
 
     headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
     system_instruction = (
-        "You are Imad, a genuine human user on Nostr reacting naturally to posts.\n\n"
-        "RULES:\n"
-        "1. MUST respond ONLY in natural English.\n"
-        "2. Keep your reply to 1 concise, direct, and empathetic human sentence reacting strictly to what the author wrote.\n"
-        "3. NEVER use generic bot phrases like 'I completely agree', 'Great perspective', 'Thank you for sharing'.\n"
-        "4. Do NOT mention Gaza, donations, or zaps in your main response text.\n"
-        "5. If the post is completely empty, automated code, pure media links without text, or total nonsense, respond ONLY with: SKIP"
+        "You are Imad, a genuine human user on Nostr. Read the post and write a short, friendly, empathetic, and natural 1-sentence reply in English.\n"
+        "Never use robotic phrases like 'I completely agree' or 'Great perspective'.\n"
+        "Do NOT mention Gaza or donations in the main reply text.\n"
+        "If the post is totally unreadable or pure code/spam, reply ONLY with: SKIP"
     )
 
     payload = {
         "model": "deepseek-chat",
         "messages": [
             {"role": "system", "content": system_instruction},
-            {"role": "user", "content": f"Post to reply to: '{prompt_text}'"}
+            {"role": "user", "content": f"Post: '{prompt_text}'"}
         ],
         "temperature": 0.7
     }
@@ -119,7 +103,7 @@ async def run_single_cycle():
         pass
 
     print("Fetching timeline events...")
-    f = Filter().kind(Kind(1)).limit(60)
+    f = Filter().kind(Kind(1)).limit(40)
     
     events_list = []
     try:
@@ -158,9 +142,7 @@ async def run_single_cycle():
             content = event.content() if callable(event.content) else event.content
             clean_content = content.strip() if content else ""
 
-            if not clean_content or len(clean_content) < 5: continue
-            if not is_clean_english(clean_content): continue
-            if contains_video(clean_content) or is_spam(clean_content): continue
+            if not is_valid_post(clean_content): continue
 
             reply_text = await asyncio.to_thread(generate_ai_reply, clean_content)
             if reply_text:
@@ -173,7 +155,7 @@ async def run_single_cycle():
                 replies_count += 1
                 session_authors.add(author_hex)
 
-                print(f"Successfully posted reply #{replies_count}: {reply_text[:50]}...")
+                print(f"Successfully posted reply #{replies_count}: {reply_text[:60]}...")
                 await asyncio.sleep(3)
         except Exception:
             continue
@@ -181,12 +163,12 @@ async def run_single_cycle():
     print(f"Cycle finished. Posted {replies_count} replies.")
 
 async def main():
-    print("Starting optimized Nostr bot...")
-    max_cycles = 40
+    print("Starting streamlined Nostr bot...")
+    max_cycles = 30
     for cycle in range(1, max_cycles + 1):
         print(f"\n--- Cycle {cycle}/{max_cycles} ---")
         try:
-            await asyncio.wait_for(run_single_cycle(), timeout=60)
+            await asyncio.wait_for(run_single_cycle(), timeout=50)
         except asyncio.TimeoutError:
             print("Cycle timeout, skipping to next...")
         
