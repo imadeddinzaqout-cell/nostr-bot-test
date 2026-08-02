@@ -17,12 +17,13 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 MAX_REPLIES = 10
 SLEEP_BETWEEN_CYCLES = 300
 
+# عبارات الـ CTA المعدلة بشكل مؤثر وطبيعي باللغة الإنجليزية
 CTA_VARIANTS = [
-    "\n\n(If you'd like to support my family in Gaza, even a small zap means the world to us 🙏⚡)",
-    "\n\n(Every small zap helps my family rebuild and stay safe ❤️⚡)",
-    "\n\n(Feel free to send a small zap if you wish to support my family in Gaza 🙏⚡)",
-    "\n\n(A small zap can make a huge difference for my family right now ⚡❤️)",
-    "\n\n(If you feel moved to help, any small zap is deeply appreciated 🙏⚡)"
+    "\n\n(Even a small zap of 1,000 sats helps ease my family's hardship here in Gaza 🙏⚡)",
+    "\n\n(Every small zap makes a real difference and lifts some of our heavy burden ❤️⚡)",
+    "\n\n(If you can send even 1,000 zaps, it truly helps my family survive and stay safe 🙏⚡)",
+    "\n\n(A small zap of 1,000 sats goes a long way in easing my family's daily struggle ⚡❤️)",
+    "\n\n(If you feel moved to support, any small zap brings warmth and relief to my family 🙏⚡)"
 ]
 
 def is_clean_english(text):
@@ -71,7 +72,7 @@ def generate_ai_reply(prompt_text):
         "1. MUST respond ONLY in natural English. NEVER use Japanese, Chinese, or non-English scripts.\n"
         "2. Keep your reply to 1 concise, direct, and empathetic human sentence reacting strictly to what the author wrote.\n"
         "3. NEVER use generic bot phrases like 'I completely agree', 'Great perspective', 'Thank you for sharing'.\n"
-        "4. Do NOT mention Gaza, donations, or zaps in your main response text.\n"
+        "4. Do NOT mention Gaza, donations, or zaps in your main response text (this will be attached automatically).\n"
         "5. If the post is non-English, empty, automated code, pure media links without text, or total nonsense, respond ONLY with: SKIP"
     )
 
@@ -122,7 +123,6 @@ async def run_single_cycle():
         return
 
     client = Client(signer)
-    # التركيز على الخوادم ذات الأداء العالي والمباشر
     relay_list = [
         "wss://relay.damus.io",
         "wss://nos.lol",
@@ -222,7 +222,6 @@ async def run_single_cycle():
             except Exception:
                 builder = EventBuilder(Kind(1), reply_text, tags)
 
-            # النشر المباشر المضمون مع إعطاء مهلة كافية 15 ثانية لتسليم الـ Event
             try:
                 print(f"Publishing reply #{replies_count + 1} to Nostr network...")
                 output = await asyncio.wait_for(client.send_event_builder(builder), timeout=15)
@@ -232,7 +231,7 @@ async def run_single_cycle():
                 already_replied_authors.add(author_hex)
                 already_replied_events.add(event_id_hex)
 
-                print(f"-> CONFIRMED & PUBLISHED reply #{replies_count}: {reply_text[:50]}...")
+                print(f"-> CONFIRMED & PUBLISHED reply #{replies_count}: {reply_text[:60]}...")
             except asyncio.TimeoutError:
                 print("Relay publish timeout. Skipping to maintain speed...")
             except Exception as pub_err:
@@ -243,7 +242,7 @@ async def run_single_cycle():
                 print(f"Waiting {fast_sleep}s for next reply...")
                 await asyncio.sleep(fast_sleep)
 
-    print(f"Completed fast cycle! Successfully published {replies_count} replies.")
+    print(f"Completed cycle! Successfully published {replies_count} replies.")
 
 async def main():
     print("Starting Nostr bot loop...")
