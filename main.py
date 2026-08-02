@@ -122,12 +122,12 @@ async def run_single_cycle():
         return
 
     client = Client(signer)
+    # التركيز على الخوادم ذات الأداء العالي والمباشر
     relay_list = [
         "wss://relay.damus.io",
         "wss://nos.lol",
         "wss://relay.primal.net",
-        "wss://relay.nostr.band",
-        "wss://purplepag.es"
+        "wss://relay.nostr.band"
     ]
     for r in relay_list:
         try:
@@ -222,32 +222,31 @@ async def run_single_cycle():
             except Exception:
                 builder = EventBuilder(Kind(1), reply_text, tags)
 
-            # الانتظار الفعلي للنشر مع مهلة سريعة 5 ثوانٍ لضمان وصول الحدث للـ Relays
+            # النشر المباشر المضمون مع إعطاء مهلة كافية 15 ثانية لتسليم الـ Event
             try:
-                await asyncio.wait_for(client.send_event_builder(builder), timeout=5)
+                print(f"Publishing reply #{replies_count + 1} to Nostr network...")
+                output = await asyncio.wait_for(client.send_event_builder(builder), timeout=15)
+                
                 replies_count += 1
                 session_authors.add(author_hex)
                 already_replied_authors.add(author_hex)
                 already_replied_events.add(event_id_hex)
 
-                print(f"Posted FAST reply #{replies_count}: {reply_text[:60]}...")
-            except (asyncio.TimeoutError, Exception) as pub_err:
-                # إذا تجاوز السيرفر 5 ثوانٍ، نحسبها نجحت كـ Broadcast ونكمل
-                replies_count += 1
-                session_authors.add(author_hex)
-                already_replied_authors.add(author_hex)
-                already_replied_events.add(event_id_hex)
-                print(f"Broadcasted reply #{replies_count} (relay response bypassed): {reply_text[:60]}...")
+                print(f"-> CONFIRMED & PUBLISHED reply #{replies_count}: {reply_text[:50]}...")
+            except asyncio.TimeoutError:
+                print("Relay publish timeout. Skipping to maintain speed...")
+            except Exception as pub_err:
+                print(f"Publish error: {pub_err}")
 
             if replies_count < MAX_REPLIES:
                 fast_sleep = random.randint(5, 10)
                 print(f"Waiting {fast_sleep}s for next reply...")
                 await asyncio.sleep(fast_sleep)
 
-    print(f"Completed fast cycle! Posted {replies_count} replies.")
+    print(f"Completed fast cycle! Successfully published {replies_count} replies.")
 
 async def main():
-    print("Starting fast Nostr bot loop...")
+    print("Starting Nostr bot loop...")
     max_cycles = 30
     current_cycle = 0
 
