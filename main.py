@@ -6,7 +6,7 @@ import requests
 from datetime import timedelta
 from nostr_sdk import (
     Client, NostrSigner, Keys, Filter, EventBuilder, Tag, Kind,
-    NostrConnect, NostrConnectUri, RelayUrl, Event
+    NostrConnect, NostrConnectUri, RelayUrl
 )
 import sys
 sys.stdout.reconfigure(line_buffering=True)
@@ -17,16 +17,13 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 MAX_REPLIES = 10
 SLEEP_BETWEEN_CYCLES = 300
 
-# عنوان محفظتك المباشر لاستقبال Zaps
 LIGHTNING_ADDR = "solemngreece21@walletofsatoshi.com"
 
-# عبارات الـ CTA المحدثة والمحتوية على عنوان المحفظة
+# عبارات الـ CTA بالصيغ المطلوبة
 CTA_VARIANTS = [
-    f"\n\n(Even a small zap of 1,000 sats helps ease my family's hardship here in Gaza 🙏⚡ LN: {LIGHTNING_ADDR})",
-    f"\n\n(Every small zap makes a real difference and lifts some of our heavy burden ❤️⚡ LN: {LIGHTNING_ADDR})",
-    f"\n\n(If you can send even 1,000 zaps, it truly helps my family survive and stay safe 🙏⚡ Lightning Address: {LIGHTNING_ADDR})",
-    f"\n\n(A small zap of 1,000 sats goes a long way in easing my family's daily struggle ⚡❤️ LN: {LIGHTNING_ADDR})",
-    f"\n\n(If you feel moved to support, any small zap brings warmth and relief to my family 🙏⚡ {LIGHTNING_ADDR})"
+    "\n\n(If you'd like to support my family in Gaza, even a tiny zap of 21 sats means the world to us 🙏⚡)",
+    f"\n\n(Even the smallest zap helps us stay safe and keep going here in Gaza ❤️⚡ LN: {LIGHTNING_ADDR})",
+    "\n\n(Any small zap directly supports my family's daily survival in Gaza 🙏⚡)"
 ]
 
 def is_clean_english(text):
@@ -219,7 +216,7 @@ async def run_single_cycle():
         if reply_text:
             reply_text += random.choice(CTA_VARIANTS)
 
-            # 1. إرسال لايك (Reaction) على المنشور الأصلي
+            # إرسال إعجاب
             try:
                 like_builder = EventBuilder.reaction(event, "+")
                 await client.send_event_builder(like_builder)
@@ -227,7 +224,7 @@ async def run_single_cycle():
             except Exception as like_err:
                 print(f"Could not send like: {like_err}")
 
-            # 2. بناء الرد المتوافق مع كافة الإصدارات
+            # إنشاء الرد المتوافق
             try:
                 t_event = Tag.parse(["e", event_id_hex, "", "reply"])
                 t_pubkey = Tag.parse(["p", author_hex])
