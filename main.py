@@ -28,7 +28,6 @@ CTA_VARIANTS = [
 def is_clean_text(text):
     if not text or len(text.strip()) < 6:
         return False, "Too short"
-    # السماح بالرموز والأحرف اللاتينية بمرونة أكبر
     latin_chars = len(re.findall(r'[a-zA-Z0-9\s.,!?\'"\-]', text))
     total_chars = len(text)
     if total_chars > 0 and (latin_chars / total_chars) < 0.40:
@@ -58,15 +57,12 @@ def generate_ai_reply(prompt_text):
         "temperature": 0.7
     }
     try:
-        # رفع مهلة الرد إلى 25 ثانية لاستيعاب ضغط سيرفرات DeepSeek
-        response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=25)
+        response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=20)
         if response.status_code == 200:
             res_text = response.json()["choices"][0]["message"]["content"].strip()
             if "SKIP" in res_text or len(res_text) < 4:
                 return None
             return res_text
-    except requests.exceptions.Timeout:
-        print("DeepSeek API timeout, checking next post...")
     except Exception as e:
         print(f"DeepSeek API Exception: {e}")
     return None
@@ -113,7 +109,6 @@ async def run_single_cycle():
     except Exception:
         bot_hex = ""
 
-    # جلب 50 منشور فقط لسرعة المعالجة
     f = Filter().kind(Kind(1)).limit(50)
     try:
         events_obj = await client.fetch_events(f, timedelta(seconds=10))
@@ -152,7 +147,6 @@ async def run_single_cycle():
             if not is_valid:
                 continue
 
-            # طلب الرد من الذكاء الاصطناعي مع التمهل المناسب
             reply_text = await asyncio.to_thread(generate_ai_reply, clean_content)
             if not reply_text:
                 print(f"AI skipped post: '{clean_content[:30]}...'")
@@ -161,17 +155,24 @@ async def run_single_cycle():
             reply_text += random.choice(CTA_VARIANTS)
 
             tags = [Tag.event(event_id_obj), Tag.public_key(author_pk)]
+            
+            # حماية عملية النشر بـ timeout حتى لا يعلق السكربت إطلاقاً
             try:
                 builder = EventBuilder.text_note(reply_text).tags(tags)
             except Exception:
                 builder = EventBuilder(Kind(1), reply_text, tags)
 
-            await client.send_event_builder(builder)
-            replies_count += 1
-            session_authors.add(author_hex)
-
-            print(f"-> POSTED REPLY #{replies_count}: {reply_text[:60]}...")
-            await asyncio.sleep(4)
+            try:
+                print(f"Sending reply to Nostr for post: '{clean_content[:20]}...'")
+                await asyncio.wait_for(client.send_event_builder(builder), timeout=8)
+                replies_count += 1
+                session_authors.add(author_hex)
+                print(f"-> SUCCESSFULLY POSTED REPLY #{replies_count}!")
+                await asyncio.sleep(3)
+            except asyncio.TimeoutError:
+                print("Relay publish timeout, skipping event...")
+            except Exception as pub_err:
+                print(f"Publishing error: {pub_err}")
 
         except Exception as loop_err:
             print(f"Loop error: {loop_err}")
