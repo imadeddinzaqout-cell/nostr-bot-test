@@ -6,7 +6,7 @@ import requests
 from datetime import timedelta
 from nostr_sdk import (
     Client, NostrSigner, Keys, Filter, EventBuilder, Tag, Kind,
-    NostrConnect, NostrConnectUri, RelayUrl
+    NostrConnect, NostrConnectUri, RelayUrl, Event
 )
 import sys
 sys.stdout.reconfigure(line_buffering=True)
@@ -17,13 +17,16 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 MAX_REPLIES = 10
 SLEEP_BETWEEN_CYCLES = 300
 
-# عبارات الـ CTA المعدلة بشكل مؤثر وطبيعي باللغة الإنجليزية
+# عنوان محفظتك المباشر لاستقبال Zaps
+LIGHTNING_ADDR = "solemngreece21@walletofsatoshi.com"
+
+# عبارات الـ CTA المحدثة والمحتوية على عنوان المحفظة
 CTA_VARIANTS = [
-    "\n\n(Even a small zap of 1,000 sats helps ease my family's hardship here in Gaza 🙏⚡)",
-    "\n\n(Every small zap makes a real difference and lifts some of our heavy burden ❤️⚡)",
-    "\n\n(If you can send even 1,000 zaps, it truly helps my family survive and stay safe 🙏⚡)",
-    "\n\n(A small zap of 1,000 sats goes a long way in easing my family's daily struggle ⚡❤️)",
-    "\n\n(If you feel moved to support, any small zap brings warmth and relief to my family 🙏⚡)"
+    f"\n\n(Even a small zap of 1,000 sats helps ease my family's hardship here in Gaza 🙏⚡ LN: {LIGHTNING_ADDR})",
+    f"\n\n(Every small zap makes a real difference and lifts some of our heavy burden ❤️⚡ LN: {LIGHTNING_ADDR})",
+    f"\n\n(If you can send even 1,000 zaps, it truly helps my family survive and stay safe 🙏⚡ Lightning Address: {LIGHTNING_ADDR})",
+    f"\n\n(A small zap of 1,000 sats goes a long way in easing my family's daily struggle ⚡❤️ LN: {LIGHTNING_ADDR})",
+    f"\n\n(If you feel moved to support, any small zap brings warmth and relief to my family 🙏⚡ {LIGHTNING_ADDR})"
 ]
 
 def is_clean_english(text):
@@ -216,11 +219,15 @@ async def run_single_cycle():
         if reply_text:
             reply_text += random.choice(CTA_VARIANTS)
 
-            tags = [Tag.event(event_id_obj), Tag.public_key(author_pk)]
+            # --- التعديل الجوهري: ربط الرد بالمنشور كـ Reply ليتصل بالـ Thread بشكل صحيح ---
             try:
-                builder = EventBuilder.text_note(reply_text).tags(tags)
+                # محاولة استخدام الدالة المباشرة للرد من مكتبة nostr-sdk
+                builder = EventBuilder.reply(event, reply_text)
             except Exception:
-                builder = EventBuilder(Kind(1), reply_text, tags)
+                # كود احتياطي متوافق مع كافة الإصدارات لبناء الـ NIP-10 Reply tags
+                t_event = Tag.custom(["e", event_id_hex, "", "reply"])
+                t_pubkey = Tag.custom(["p", author_hex])
+                builder = EventBuilder(Kind(1), reply_text, [t_event, t_pubkey])
 
             try:
                 print(f"Publishing reply #{replies_count + 1} to Nostr network...")
