@@ -219,15 +219,24 @@ async def run_single_cycle():
         if reply_text:
             reply_text += random.choice(CTA_VARIANTS)
 
-            # --- التعديل الجوهري: ربط الرد بالمنشور كـ Reply ليتصل بالـ Thread بشكل صحيح ---
+            # 1. إرسال لايك (Reaction) على المنشور الأصلي
             try:
-                # محاولة استخدام الدالة المباشرة للرد من مكتبة nostr-sdk
-                builder = EventBuilder.reply(event, reply_text)
-            except Exception:
-                # كود احتياطي متوافق مع كافة الإصدارات لبناء الـ NIP-10 Reply tags
-                t_event = Tag.custom(["e", event_id_hex, "", "reply"])
-                t_pubkey = Tag.custom(["p", author_hex])
+                like_builder = EventBuilder.reaction(event, "+")
+                await client.send_event_builder(like_builder)
+                print(f"-> Liked post: {event_id_hex[:8]}...")
+            except Exception as like_err:
+                print(f"Could not send like: {like_err}")
+
+            # 2. بناء الرد المتوافق مع كافة الإصدارات
+            try:
+                t_event = Tag.parse(["e", event_id_hex, "", "reply"])
+                t_pubkey = Tag.parse(["p", author_hex])
                 builder = EventBuilder(Kind(1), reply_text, [t_event, t_pubkey])
+            except Exception:
+                try:
+                    builder = EventBuilder.text_note(reply_text).tags([Tag.event(event_id_obj), Tag.public_key(author_pk)])
+                except Exception:
+                    builder = EventBuilder(Kind(1), reply_text, [Tag.event(event_id_obj), Tag.public_key(author_pk)])
 
             try:
                 print(f"Publishing reply #{replies_count + 1} to Nostr network...")
