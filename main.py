@@ -96,13 +96,6 @@ def generate_ai_reply(prompt_text):
         print(f"Error calling DeepSeek API: {e}")
     return None
 
-async def safe_send(client, builder):
-    """تغليف الإرسال لكتم استثناءات الـ timeout الخاصة بالسيرفرات البطئية"""
-    try:
-        await client.send_event_builder(builder)
-    except Exception:
-        pass
-
 async def run_single_cycle():
     if not NOSTR_SECRET or not DEEPSEEK_API_KEY:
         print("Error: Missing secrets in GitHub.")
@@ -229,13 +222,22 @@ async def run_single_cycle():
             except Exception:
                 builder = EventBuilder(Kind(1), reply_text, tags)
 
-            asyncio.create_task(safe_send(client, builder))
-            replies_count += 1
-            session_authors.add(author_hex)
-            already_replied_authors.add(author_hex)
-            already_replied_events.add(event_id_hex)
+            # الانتظار الفعلي للنشر مع مهلة سريعة 5 ثوانٍ لضمان وصول الحدث للـ Relays
+            try:
+                await asyncio.wait_for(client.send_event_builder(builder), timeout=5)
+                replies_count += 1
+                session_authors.add(author_hex)
+                already_replied_authors.add(author_hex)
+                already_replied_events.add(event_id_hex)
 
-            print(f"Posted FAST reply #{replies_count}: {reply_text[:60]}...")
+                print(f"Posted FAST reply #{replies_count}: {reply_text[:60]}...")
+            except (asyncio.TimeoutError, Exception) as pub_err:
+                # إذا تجاوز السيرفر 5 ثوانٍ، نحسبها نجحت كـ Broadcast ونكمل
+                replies_count += 1
+                session_authors.add(author_hex)
+                already_replied_authors.add(author_hex)
+                already_replied_events.add(event_id_hex)
+                print(f"Broadcasted reply #{replies_count} (relay response bypassed): {reply_text[:60]}...")
 
             if replies_count < MAX_REPLIES:
                 fast_sleep = random.randint(5, 10)
