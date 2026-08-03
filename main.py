@@ -17,9 +17,9 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 MAX_REPLIES = 10
 SLEEP_BETWEEN_CYCLES = 300
 
-# عبارات الـ CTA نظيفة وطبيعية بدون إدراج عنوان المحفظة النصي
+# عبارات الـ CTA معدلة بدون تحديد رقم (إلغاء 21 sats)
 CTA_VARIANTS = [
-    "\n\n(If you'd like to support my family in Gaza, even a tiny zap of 21 sats means the world to us 🙏⚡)",
+    "\n\n(If you'd like to support my family in Gaza, even a tiny zap means the world to us 🙏⚡)",
     "\n\n(Even the smallest zap helps us stay safe and keep going here in Gaza ❤️⚡)",
     "\n\n(Any small zap directly supports my family's daily survival in Gaza 🙏⚡)"
 ]
