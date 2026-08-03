@@ -17,12 +17,10 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 MAX_REPLIES = 10
 SLEEP_BETWEEN_CYCLES = 300
 
-LIGHTNING_ADDR = "solemngreece21@walletofsatoshi.com"
-
-# عبارات الـ CTA بالصيغ المطلوبة
+# عبارات الـ CTA نظيفة وطبيعية بدون إدراج عنوان المحفظة النصي
 CTA_VARIANTS = [
     "\n\n(If you'd like to support my family in Gaza, even a tiny zap of 21 sats means the world to us 🙏⚡)",
-    f"\n\n(Even the smallest zap helps us stay safe and keep going here in Gaza ❤️⚡ LN: {LIGHTNING_ADDR})",
+    "\n\n(Even the smallest zap helps us stay safe and keep going here in Gaza ❤️⚡)",
     "\n\n(Any small zap directly supports my family's daily survival in Gaza 🙏⚡)"
 ]
 
