@@ -17,13 +17,6 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 MAX_REPLIES = 10
 SLEEP_BETWEEN_CYCLES = 300
 
-# عبارات الـ CTA معدلة بدون تحديد رقم (إلغاء 21 sats)
-CTA_VARIANTS = [
-    "\n\n(If you'd like to support my family in Gaza, even a tiny zap means the world to us 🙏⚡)",
-    "\n\n(Even the smallest zap helps us stay safe and keep going here in Gaza ❤️⚡)",
-    "\n\n(Any small zap directly supports my family's daily survival in Gaza 🙏⚡)"
-]
-
 def is_clean_english(text):
     if not text:
         return False
@@ -70,7 +63,7 @@ def generate_ai_reply(prompt_text):
         "1. MUST respond ONLY in natural English. NEVER use Japanese, Chinese, or non-English scripts.\n"
         "2. Keep your reply to 1 concise, direct, and empathetic human sentence reacting strictly to what the author wrote.\n"
         "3. NEVER use generic bot phrases like 'I completely agree', 'Great perspective', 'Thank you for sharing'.\n"
-        "4. Do NOT mention Gaza, donations, or zaps in your main response text (this will be attached automatically).\n"
+        "4. Do NOT mention Gaza, donations, or zaps in your response text.\n"
         "5. If the post is non-English, empty, automated code, pure media links without text, or total nonsense, respond ONLY with: SKIP"
     )
 
@@ -212,8 +205,6 @@ async def run_single_cycle():
 
         reply_text = await asyncio.to_thread(generate_ai_reply, clean_content)
         if reply_text:
-            reply_text += random.choice(CTA_VARIANTS)
-
             # إرسال إعجاب
             try:
                 like_builder = EventBuilder.reaction(event, "+")
@@ -222,7 +213,7 @@ async def run_single_cycle():
             except Exception as like_err:
                 print(f"Could not send like: {like_err}")
 
-            # إنشاء الرد المتوافق
+            # إنشاء الرد المتوافق (بدون أي نصوص إضافية)
             try:
                 t_event = Tag.parse(["e", event_id_hex, "", "reply"])
                 t_pubkey = Tag.parse(["p", author_hex])
