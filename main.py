@@ -6,7 +6,7 @@ import requests
 from datetime import timedelta
 from nostr_sdk import (
     Client, NostrSigner, Keys, Filter, EventBuilder, Tag, Kind,
-    NostrConnect, NostrConnectUri, RelayUrl, PublicKey
+    RelayUrl, PublicKey
 )
 import sys
 sys.stdout.reconfigure(line_buffering=True)
@@ -115,8 +115,6 @@ async def process_follow_backs(client, bot_pk):
     existing_follows = await fetch_existing_following(client, bot_pk)
     interacted_authors = set()
 
-    # جلب الأحداث التي تشير لحسابك (p-tag) لجميع أنواع التفاعل
-    # Kind 1 (Reply), Kind 6 (Repost), Kind 7 (Reaction/Like), Kind 9735 (Zap)
     interaction_filter = Filter().pubkey(bot_pk).kinds([Kind(1), Kind(6), Kind(7), Kind(9735)]).limit(100)
     
     try:
@@ -127,14 +125,12 @@ async def process_follow_backs(client, bot_pk):
             author_pk = ev.author() if callable(ev.author) else ev.author
             author_hex = author_pk.to_hex().lower()
             
-            # تجاهل نفسك والحسابات المتابعة سابقاً
             if author_hex != bot_pk.to_hex().lower() and author_hex not in existing_follows:
                 interacted_authors.add(author_pk)
 
         if interacted_authors:
             print(f"Found {len(interacted_authors)} new user(s) who interacted with your profile! Processing Follow Back...")
             
-            # بناء قائمة المفاتيح العامة المحدثة
             contacts = [PublicKey.parse(hex_str) for hex_str in existing_follows]
             for new_author in interacted_authors:
                 contacts.append(new_author)
@@ -153,24 +149,11 @@ async def run_single_cycle():
         print("Error: Missing secrets in GitHub.")
         return
 
-    if NOSTR_SECRET.startswith("nsec1"):
+    try:
         keys = Keys.parse(NOSTR_SECRET)
         signer = NostrSigner.keys(keys)
-    elif NOSTR_SECRET.startswith("bunker://") or NOSTR_SECRET.startswith("nostrconnect://"):
-        app_keys = Keys.generate()
-        try:
-            uri = NostrConnectUri.parse(NOSTR_SECRET)
-        except Exception:
-            uri = NOSTR_SECRET
-        try:
-            from nostr_sdk import NostrConnectOptions
-            opts = NostrConnectOptions()
-        except Exception:
-            opts = None
-        nc = NostrConnect(uri, app_keys, timedelta(seconds=30), opts)
-        signer = NostrSigner.nostr_connect(nc)
-    else:
-        print("Error: Invalid NOSTR_NSEC format.")
+    except Exception as e:
+        print(f"Error: Invalid NOSTR_NSEC key format: {e}")
         return
 
     client = Client(signer)
@@ -194,7 +177,6 @@ async def run_single_cycle():
     except Exception:
         bot_pk = None
 
-    # --- 1. تنفيذ خطوة المتابعة العكسية لكل تفاعل جديد (Follow Back) ---
     if bot_pk:
         await process_follow_backs(client, bot_pk)
 
@@ -269,7 +251,6 @@ async def run_single_cycle():
 
         reply_text = await asyncio.to_thread(generate_ai_reply, clean_content)
         if reply_text:
-            # 1. إرسال إعجاب (Like)
             try:
                 like_builder = EventBuilder.reaction(event, "+")
                 await client.send_event_builder(like_builder)
@@ -277,7 +258,6 @@ async def run_single_cycle():
             except Exception as like_err:
                 print(f"Could not send like: {like_err}")
 
-            # 2. إنشاء وإرسال الرد (Reply)
             try:
                 t_event = Tag.parse(["e", event_id_hex, "", "reply"])
                 t_pubkey = Tag.parse(["p", author_hex])
