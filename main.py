@@ -6,7 +6,7 @@ import requests
 from datetime import timedelta
 from nostr_sdk import (
     Client, NostrSigner, Keys, Filter, EventBuilder, Tag, Kind,
-    NostrConnect, NostrConnectUri, RelayUrl, Contact
+    NostrConnect, NostrConnectUri, RelayUrl, Contact, PublicKey
 )
 import sys
 sys.stdout.reconfigure(line_buffering=True)
@@ -88,44 +88,65 @@ def generate_ai_reply(prompt_text):
         print(f"Error calling DeepSeek API: {e}")
     return None
 
-async def follow_author(client, author_pk):
-    """دالة لمتابعة الكاتب إضافةً لقائمة المتابعين الحالية"""
+async def fetch_existing_following(client, bot_pk):
+    """جلب قائمة المفاتيح التي يتابعها البوت حالياً لعدم تكرار المتابعة"""
+    following_hex = set()
     try:
-        # جلب قائمة المتابعين الحالية للبوت
-        bot_pk = await client.signer().public_key() if hasattr(client, "signer") else None
-        contacts = []
-        if bot_pk:
-            f = Filter().author(bot_pk).kind(Kind(3)).limit(1)
-            events = await client.fetch_events(f, timedelta(seconds=5))
-            ev_list = events.to_vec() if hasattr(events, "to_vec") else list(events)
-            if ev_list:
-                latest_ev = ev_list[0]
-                tags_iter = latest_ev.tags() if callable(latest_ev.tags) else latest_ev.tags
-                for t in tags_iter:
-                    vec = t.as_vec() if hasattr(t, "as_vec") else list(t)
-                    if len(vec) >= 2 and str(vec[0]).lower() == 'p':
-                        # إضافة جهة الاتصال القديمة
-                        try:
-                            contacts.append(Contact(PublicKey.parse(vec[1]), vec[2] if len(vec) > 2 else None, None))
-                        except Exception:
-                            pass
-
-        # إضافة الكاتب الجديد للقائمة
-        contacts.append(Contact(author_pk, None, None))
-        
-        # إنشاء وإنشاء الحدث
-        builder = EventBuilder.contact_list(contacts)
-        await client.send_event_builder(builder)
-        print(f"-> Successfully followed author: {author_pk.to_hex()[:8]}...")
+        f = Filter().author(bot_pk).kind(Kind(3)).limit(1)
+        events = await client.fetch_events(f, timedelta(seconds=5))
+        ev_list = events.to_vec() if hasattr(events, "to_vec") else list(events)
+        if ev_list:
+            latest_ev = ev_list[0]
+            tags_iter = latest_ev.tags() if callable(latest_ev.tags) else latest_ev.tags
+            for t in tags_iter:
+                vec = t.as_vec() if hasattr(t, "as_vec") else list(t)
+                if len(vec) >= 2 and str(vec[0]).lower() == 'p':
+                    following_hex.add(str(vec[1]).lower())
     except Exception as e:
-        # أسلوب احتياطي بسيط للمتابعة بإضافة p-tag مباشرة
-        try:
-            p_tag = Tag.parse(["p", author_pk.to_hex()])
-            builder = EventBuilder(Kind(3), "", [p_tag])
+        print(f"Error fetching existing following list: {e}")
+    return following_hex
+
+async def process_follow_backs(client, bot_pk):
+    """متابعة أي شخص تفاعل مع الحساب (Reply, Repost, Zap, Reaction)"""
+    if not bot_pk:
+        return
+
+    print("Checking for new user interactions (Replies, Reposts, Zaps, Reactions)...")
+    existing_follows = await fetch_existing_following(client, bot_pk)
+    interacted_authors = set()
+
+    # جلب الأحداث التي تشير لحسابك (p-tag) لجميع أنواط التفاعل
+    # Kind 1 (Reply), Kind 6 (Repost), Kind 7 (Reaction/Like), Kind 9735 (Zap)
+    interaction_filter = Filter().pubkey(bot_pk).kinds([Kind(1), Kind(6), Kind(7), Kind(9735)]).limit(100)
+    
+    try:
+        events_obj = await client.fetch_events(interaction_filter, timedelta(seconds=10))
+        events_list = events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj)
+        
+        for ev in events_list:
+            author_pk = ev.author() if callable(ev.author) else ev.author
+            author_hex = author_pk.to_hex().lower()
+            
+            # تجاهل نفسك والحسابات المتابعة سابقاً
+            if author_hex != bot_pk.to_hex().lower() and author_hex not in existing_follows:
+                interacted_authors.add(author_pk)
+
+        if interacted_authors:
+            print(f"Found {len(interacted_authors)} new user(s) who interacted with your profile! Processing Follow Back...")
+            
+            # بناء قائمة الاتصالات المحدثة
+            contacts = [Contact(PublicKey.parse(hex_str), None, None) for hex_str in existing_follows]
+            for new_author in interacted_authors:
+                contacts.append(Contact(new_author, None, None))
+
+            builder = EventBuilder.contact_list(contacts)
             await client.send_event_builder(builder)
-            print(f"-> Followed author via fallback: {author_pk.to_hex()[:8]}...")
-        except Exception as err:
-            print(f"Could not follow author: {err}")
+            print(f"-> Successfully followed back {len(interacted_authors)} user(s)!")
+        else:
+            print("No new interaction accounts to follow back at this time.")
+
+    except Exception as e:
+        print(f"Error processing follow-backs: {e}")
 
 async def run_single_cycle():
     if not NOSTR_SECRET or not DEEPSEEK_API_KEY:
@@ -172,6 +193,10 @@ async def run_single_cycle():
         bot_pk = await signer.public_key()
     except Exception:
         bot_pk = None
+
+    # --- 1. تنفيذ خطوة المتابعة العكسية لكل تفاعل جديد (Follow Back) ---
+    if bot_pk:
+        await process_follow_backs(client, bot_pk)
 
     bot_hex = bot_pk.to_hex().lower() if bot_pk else ""
     already_replied_events = set()
@@ -252,10 +277,7 @@ async def run_single_cycle():
             except Exception as like_err:
                 print(f"Could not send like: {like_err}")
 
-            # 2. متابعة الحساب (Follow)
-            await follow_author(client, author_pk)
-
-            # 3. إنشاء وإرسال الرد (Reply)
+            # 2. إنشاء وإرسال الرد (Reply)
             try:
                 t_event = Tag.parse(["e", event_id_hex, "", "reply"])
                 t_pubkey = Tag.parse(["p", author_hex])
