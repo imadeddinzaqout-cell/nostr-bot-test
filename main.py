@@ -151,10 +151,14 @@ async def run_single_cycle():
 
     try:
         keys = Keys.parse(NOSTR_SECRET)
-        signer = NostrSigner.keys(keys)
-    except Exception as e:
-        print(f"Error: Invalid NOSTR_NSEC key format: {e}")
-        return
+        signer = NostrSigner.keys(keys) if hasattr(NostrSigner, 'keys') else NostrSigner.private_key(keys)
+    except Exception:
+        try:
+            keys = Keys.parse(NOSTR_SECRET)
+            signer = NostrSigner(keys)
+        except Exception as e:
+            print(f"Error: Invalid NOSTR_NSEC key format: {e}")
+            return
 
     client = Client(signer)
     relay_list = [
