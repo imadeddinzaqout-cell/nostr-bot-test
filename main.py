@@ -6,7 +6,7 @@ import requests
 from datetime import timedelta
 from nostr_sdk import (
     Client, NostrSigner, Keys, Filter, EventBuilder, Tag, Kind,
-    NostrConnect, NostrConnectUri, RelayUrl, Contact, PublicKey
+    NostrConnect, NostrConnectUri, RelayUrl, PublicKey
 )
 import sys
 sys.stdout.reconfigure(line_buffering=True)
@@ -115,7 +115,7 @@ async def process_follow_backs(client, bot_pk):
     existing_follows = await fetch_existing_following(client, bot_pk)
     interacted_authors = set()
 
-    # جلب الأحداث التي تشير لحسابك (p-tag) لجميع أنواط التفاعل
+    # جلب الأحداث التي تشير لحسابك (p-tag) لجميع أنواع التفاعل
     # Kind 1 (Reply), Kind 6 (Repost), Kind 7 (Reaction/Like), Kind 9735 (Zap)
     interaction_filter = Filter().pubkey(bot_pk).kinds([Kind(1), Kind(6), Kind(7), Kind(9735)]).limit(100)
     
@@ -134,10 +134,10 @@ async def process_follow_backs(client, bot_pk):
         if interacted_authors:
             print(f"Found {len(interacted_authors)} new user(s) who interacted with your profile! Processing Follow Back...")
             
-            # بناء قائمة الاتصالات المحدثة
-            contacts = [Contact(PublicKey.parse(hex_str), None, None) for hex_str in existing_follows]
+            # بناء قائمة المفاتيح العامة المحدثة
+            contacts = [PublicKey.parse(hex_str) for hex_str in existing_follows]
             for new_author in interacted_authors:
-                contacts.append(Contact(new_author, None, None))
+                contacts.append(new_author)
 
             builder = EventBuilder.contact_list(contacts)
             await client.send_event_builder(builder)
