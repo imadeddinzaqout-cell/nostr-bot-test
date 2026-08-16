@@ -152,16 +152,21 @@ async def run_single_cycle():
 
     try:
         keys = Keys.parse(NOSTR_SECRET)
-        signer = NostrSigner.keys(keys) if hasattr(NostrSigner, 'keys') else NostrSigner.private_key(keys)
-    except Exception:
-        try:
-            keys = Keys.parse(NOSTR_SECRET)
-            signer = NostrSigner(keys)
-        except Exception as e:
-            print(f"Error: Invalid NOSTR_NSEC key format: {e}")
-            return
+        if hasattr(NostrSigner, 'keys'):
+            signer = NostrSigner.keys(keys)
+        elif hasattr(NostrSigner, 'private_key'):
+            signer = NostrSigner.private_key(keys)
+        else:
+            signer = keys
+    except Exception as e:
+        print(f"Error: Invalid NOSTR_NSEC key format: {e}")
+        return
 
-    client = Client(signer)
+    try:
+        client = Client(signer)
+    except Exception:
+        client = Client(keys)
+
     relay_list = [
         "wss://relay.damus.io",
         "wss://nos.lol",
@@ -178,9 +183,12 @@ async def run_single_cycle():
     print("Connected to Nostr Relays!")
 
     try:
-        bot_pk = await signer.public_key()
+        if hasattr(signer, 'public_key'):
+            bot_pk = await signer.public_key() if asyncio.iscoroutinefunction(signer.public_key) else signer.public_key()
+        else:
+            bot_pk = keys.public_key() if callable(keys.public_key) else keys.public_key
     except Exception:
-        bot_pk = None
+        bot_pk = keys.public_key() if hasattr(keys, 'public_key') else None
 
     if bot_pk:
         await process_follow_backs(client, bot_pk)
