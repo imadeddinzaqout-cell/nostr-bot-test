@@ -6,7 +6,7 @@ import requests
 from datetime import timedelta
 from nostr_sdk import (
     Client, NostrSigner, Keys, Filter, EventBuilder, Tag, Kind,
-    RelayUrl, PublicKey
+    PublicKey
 )
 import sys
 sys.stdout.reconfigure(line_buffering=True)
@@ -152,27 +152,12 @@ async def run_single_cycle():
 
     try:
         keys = Keys.parse(NOSTR_SECRET)
+        signer = NostrSigner.keys(keys)
     except Exception as e:
         print(f"Error parsing keys: {e}")
         return
 
-    # إنشاء العميل والتوقيع بطريقة متوافقة
-    try:
-        if hasattr(NostrSigner, 'keys'):
-            signer = NostrSigner.keys(keys)
-        elif hasattr(NostrSigner, 'private_key'):
-            signer = NostrSigner.private_key(keys)
-        else:
-            signer = None
-
-        if hasattr(Client, 'with_keys'):
-            client = Client.with_keys(keys)
-        elif signer:
-            client = Client(signer)
-        else:
-            client = Client()
-    except Exception:
-        client = Client()
+    client = Client(signer)
 
     relay_list = [
         "wss://relay.damus.io",
@@ -182,16 +167,17 @@ async def run_single_cycle():
     ]
     for r in relay_list:
         try:
-            await client.add_relay(RelayUrl.parse(r))
-        except Exception:
             await client.add_relay(r)
+        except Exception as e:
+            print(f"Error adding relay {r}: {e}")
 
     await client.connect()
     print("Connected to Nostr Relays!")
 
-    bot_pk = keys.public_key() if hasattr(keys, 'public_key') else None
-    if callable(bot_pk):
-        bot_pk = bot_pk()
+    try:
+        bot_pk = await signer.public_key()
+    except Exception:
+        bot_pk = keys.public_key()
 
     if bot_pk:
         await process_follow_backs(client, bot_pk)
