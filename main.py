@@ -152,20 +152,27 @@ async def run_single_cycle():
 
     try:
         keys = Keys.parse(NOSTR_SECRET)
+    except Exception as e:
+        print(f"Error parsing keys: {e}")
+        return
+
+    # إنشاء العميل والتوقيع بطريقة متوافقة
+    try:
         if hasattr(NostrSigner, 'keys'):
             signer = NostrSigner.keys(keys)
         elif hasattr(NostrSigner, 'private_key'):
             signer = NostrSigner.private_key(keys)
         else:
-            signer = keys
-    except Exception as e:
-        print(f"Error: Invalid NOSTR_NSEC key format: {e}")
-        return
+            signer = None
 
-    try:
-        client = Client(signer)
+        if hasattr(Client, 'with_keys'):
+            client = Client.with_keys(keys)
+        elif signer:
+            client = Client(signer)
+        else:
+            client = Client()
     except Exception:
-        client = Client(keys)
+        client = Client()
 
     relay_list = [
         "wss://relay.damus.io",
@@ -182,13 +189,9 @@ async def run_single_cycle():
     await client.connect()
     print("Connected to Nostr Relays!")
 
-    try:
-        if hasattr(signer, 'public_key'):
-            bot_pk = await signer.public_key() if asyncio.iscoroutinefunction(signer.public_key) else signer.public_key()
-        else:
-            bot_pk = keys.public_key() if callable(keys.public_key) else keys.public_key
-    except Exception:
-        bot_pk = keys.public_key() if hasattr(keys, 'public_key') else None
+    bot_pk = keys.public_key() if hasattr(keys, 'public_key') else None
+    if callable(bot_pk):
+        bot_pk = bot_pk()
 
     if bot_pk:
         await process_follow_backs(client, bot_pk)
@@ -305,7 +308,7 @@ async def run_single_cycle():
 
 async def main():
     print("Starting Nostr bot loop...")
-    max_cycles = 60  # 60 دورة × 5 دقائق = 300 دقيقة (5 ساعات تشغيل متواصل)
+    max_cycles = 60
     current_cycle = 0
 
     while current_cycle < max_cycles:
