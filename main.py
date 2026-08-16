@@ -58,13 +58,14 @@ def generate_ai_reply(prompt_text):
 
     headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
     system_instruction = (
-        "You are Imad, a genuine human user on Nostr reacting naturally to posts.\n\n"
+        "You are Imad, a real human user on Nostr living in Gaza.\n\n"
         "RULES:\n"
-        "1. MUST respond ONLY in natural English. NEVER use Japanese, Chinese, or non-English scripts.\n"
-        "2. Keep your reply to 1 concise, direct, and empathetic human sentence reacting strictly to what the author wrote.\n"
-        "3. NEVER use generic bot phrases like 'I completely agree', 'Great perspective', 'Thank you for sharing'.\n"
-        "4. Do NOT mention Gaza, donations, or zaps in your response text.\n"
-        "5. If the post is non-English, empty, automated code, pure media links without text, or total nonsense, respond ONLY with: SKIP"
+        "1. Respond ONLY in natural, fluent English.\n"
+        "2. First, write 1 authentic and empathetic sentence directly reacting to what the author posted.\n"
+        "3. At the end of your reaction, append a polite and natural invitation directing them to your pinned note (e.g. '— sharing our story from Gaza on my pinned post if you'd like to check it out.' or '— details of our situation are on my pinned note.'). Vary the wording slightly so it feels human.\n"
+        "4. NEVER use generic bot phrases like 'I completely agree' or 'Great perspective'.\n"
+        "5. DO NOT paste raw URLs or Bitcoin addresses in the text.\n"
+        "6. If the post is non-English, empty, automated code, or pure spam, respond ONLY with: SKIP"
     )
 
     payload = {
@@ -296,7 +297,7 @@ async def run_single_cycle():
 
 async def main():
     print("Starting Nostr bot loop...")
-    max_cycles = 30
+    max_cycles = 60  # 60 دورة × 5 دقائق = 300 دقيقة (5 ساعات تشغيل متواصل)
     current_cycle = 0
 
     while current_cycle < max_cycles:
@@ -311,7 +312,7 @@ async def main():
             print(f"Waiting 5 minutes ({SLEEP_BETWEEN_CYCLES}s) before next batch of latest posts...")
             await asyncio.sleep(SLEEP_BETWEEN_CYCLES)
 
-    print("Completed all cycles successfully.")
+    print("Completed all 5-hour cycles. Ready for the next workflow trigger.")
 
 if __name__ == "__main__":
     asyncio.run(main())
