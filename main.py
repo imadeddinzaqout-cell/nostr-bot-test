@@ -17,6 +17,25 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 MAX_REPLIES = 10
 SLEEP_BETWEEN_CYCLES = 300
 
+# مكتبة متنوعة جداً من الخواتم لمنع أي تكرار
+DYNAMIC_CLOSINGS = [
+    "🕊️ Documenting our family's daily reality in Gaza on my pinned post if you'd like to check it out.",
+    "✨ Sharing raw updates & our personal story from Gaza on my pinned note.",
+    "🍉 If you have a moment, our story and daily struggle in Gaza are pinned at the top of my profile.",
+    "🤍 Holding onto hope amidst the ruins—our journey is shared on my pinned post if you feel like reading.",
+    "🕊️ I share honest dispatches of our life in Gaza on my pinned post. Appreciate kind eyes on it.",
+    "🌱 Documenting what survival looks like for our family here on my pinned note if you wish to see.",
+    "✨ Sharing our lived reality from Gaza on my pinned thread. Wishing you peace.",
+    "🕊️ Pinned our personal story & updates on my profile if you'd like to connect with our reality in Gaza.",
+    "🍉 Sharing glimpses of our days and hope from Gaza on my pinned note.",
+    "🤍 Our story and family updates from northern Gaza are pinned on my profile if you care to read.",
+    "🕊️ Sharing raw reflections from our tent in Gaza on my pinned post if you'd like to take a look.",
+    "✨ Pinned our journey of resilience & survival here in Gaza at the top of my page.",
+    "🌱 Documenting our daily life amidst hardships on my pinned note. Sending warmth your way.",
+    "🕊️ Our personal diary and story from Gaza are pinned on my profile if you'd like to see.",
+    "🤍 Quietly sharing our family updates from Gaza on my pinned note if you ever want to check."
+]
+
 def get_event_tags_list(event):
     """استخراج قائمة الـ Tags بأمان متوافق مع كافة الإصدارات"""
     try:
@@ -49,7 +68,7 @@ def is_spam(text):
     text_lower = text.lower()
     if len(re.findall(r'https?://\S+', text)) >= 2:
         return True
-    return any(kw in text_lower for kw in ["solana", "trycloudflare", "kill-fee", "moneymaker", "airdrop", "presale", "telegram"])
+    return any(kw in text_lower for kw in ["solana", "trycloudflare", "kill-fee", "moneymaker", "airdrop", "presale", "telegram", "crypto"])
 
 def is_reply_or_quote(event):
     try:
@@ -68,19 +87,14 @@ def generate_ai_reply(prompt_text):
 
     headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
     system_instruction = (
-        "You are Imad, a genuine human user on Nostr living in Gaza.\n\n"
+        "You are Imad, a genuine human being living through the hardships in Gaza, replying authentically on Nostr.\n\n"
         "TASK:\n"
-        "Reply naturally to the user's post in English, and format it nicely into TWO distinct parts separated by a double line break:\n\n"
-        "Part 1: 1 authentic, friendly, and direct sentence reacting specifically to what the author posted.\n\n"
-        "Part 2: A short, humble note directing them to your pinned post.\n\n"
-        "OUTPUT FORMAT (STRICT):\n"
-        "<Your 1-sentence reaction here>\n\n"
-        "🕊️ Sharing our journey & reality from Gaza on my pinned post if you'd like to read.\n\n"
+        "Write exactly ONE authentic, conversational, and direct sentence reacting specifically to what the author posted.\n\n"
         "RULES:\n"
-        "1. MUST keep exactly TWO empty lines (\\n\\n) between the reaction and the pinned post note.\n"
-        "2. Do NOT use robot cliches like 'I completely agree', 'Great perspective', 'Thank you for sharing'.\n"
-        "3. DO NOT paste raw URLs or Bitcoin addresses.\n"
-        "4. If the post is non-English, pure spam, or code, respond ONLY with: SKIP"
+        "1. Write ONLY the 1-sentence reaction. Do NOT add any closing note, footer, or link (it will be added dynamically).\n"
+        "2. Do NOT use cliché chatbot openings like 'I agree', 'Great perspective', 'Thanks for sharing', 'It is interesting'.\n"
+        "3. Sound like a real, thoughtful human on social media.\n"
+        "4. If the post is non-English, pure spam, gibberish, or code, respond ONLY with: SKIP"
     )
 
     payload = {
@@ -89,17 +103,23 @@ def generate_ai_reply(prompt_text):
             {"role": "system", "content": system_instruction},
             {"role": "user", "content": f"Post to reply to: '{prompt_text}'"}
         ],
-        "temperature": 0.7
+        "temperature": 0.85
     }
     try:
         response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=15)
         if response.status_code == 200:
-            res_text = response.json()["choices"][0]["message"]["content"].strip()
+            res_text = response.json()["choices"][0]["message"]["content"].strip().replace('"', '')
             if "SKIP" in res_text or "can't react" in res_text.lower() or len(res_text) < 5:
                 return None
             if not is_clean_english(res_text):
                 return None
-            return res_text
+            
+            # اختيار خاتمة عشوائية متنوعة تماماً
+            chosen_closing = random.choice(DYNAMIC_CLOSINGS)
+            
+            # دمج الرد مع الخاتمة عبر سطرين فارغين
+            full_reply = f"{res_text}\n\n{chosen_closing}"
+            return full_reply
     except Exception as e:
         print(f"Error calling DeepSeek API: {e}")
     return None
