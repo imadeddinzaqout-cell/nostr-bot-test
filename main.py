@@ -17,6 +17,16 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 MAX_REPLIES = 10
 SLEEP_BETWEEN_CYCLES = 300
 
+def get_event_tags_list(event):
+    """استخراج قائمة الـ Tags بأمان متوافق مع كافة الإصدارات"""
+    try:
+        raw_tags = event.tags() if callable(event.tags) else event.tags
+        if hasattr(raw_tags, "to_vec"):
+            return raw_tags.to_vec()
+        return list(raw_tags)
+    except Exception:
+        return []
+
 def is_clean_english(text):
     if not text:
         return False
@@ -43,7 +53,7 @@ def is_spam(text):
 
 def is_reply_or_quote(event):
     try:
-        tags_iter = event.tags() if callable(event.tags) else event.tags
+        tags_iter = get_event_tags_list(event)
         for t in tags_iter:
             vec = t.as_vec() if hasattr(t, "as_vec") else list(t)
             if len(vec) >= 1 and str(vec[0]).lower() == 'e':
@@ -58,14 +68,19 @@ def generate_ai_reply(prompt_text):
 
     headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
     system_instruction = (
-        "You are Imad, a real human user on Nostr living in Gaza.\n\n"
+        "You are Imad, a genuine human user on Nostr living in Gaza.\n\n"
+        "TASK:\n"
+        "Reply naturally to the user's post in English, and format it nicely into TWO distinct parts separated by a double line break:\n\n"
+        "Part 1: 1 authentic, friendly, and direct sentence reacting specifically to what the author posted.\n\n"
+        "Part 2: A short, humble note directing them to your pinned post.\n\n"
+        "OUTPUT FORMAT (STRICT):\n"
+        "<Your 1-sentence reaction here>\n\n"
+        "🕊️ Sharing our journey & reality from Gaza on my pinned post if you'd like to read.\n\n"
         "RULES:\n"
-        "1. Respond ONLY in natural, fluent English.\n"
-        "2. First, write 1 authentic and empathetic sentence directly reacting to what the author posted.\n"
-        "3. At the end of your reaction, append a polite and natural invitation directing them to your pinned note (e.g. '— sharing our story from Gaza on my pinned post if you'd like to check it out.' or '— details of our situation are on my pinned note.'). Vary the wording slightly so it feels human.\n"
-        "4. NEVER use generic bot phrases like 'I completely agree' or 'Great perspective'.\n"
-        "5. DO NOT paste raw URLs or Bitcoin addresses in the text.\n"
-        "6. If the post is non-English, empty, automated code, or pure spam, respond ONLY with: SKIP"
+        "1. MUST keep exactly TWO empty lines (\\n\\n) between the reaction and the pinned post note.\n"
+        "2. Do NOT use robot cliches like 'I completely agree', 'Great perspective', 'Thank you for sharing'.\n"
+        "3. DO NOT paste raw URLs or Bitcoin addresses.\n"
+        "4. If the post is non-English, pure spam, or code, respond ONLY with: SKIP"
     )
 
     payload = {
@@ -98,7 +113,7 @@ async def fetch_existing_following(client, bot_pk):
         ev_list = events.to_vec() if hasattr(events, "to_vec") else list(events)
         if ev_list:
             latest_ev = ev_list[0]
-            tags_iter = latest_ev.tags() if callable(latest_ev.tags) else latest_ev.tags
+            tags_iter = get_event_tags_list(latest_ev)
             for t in tags_iter:
                 vec = t.as_vec() if hasattr(t, "as_vec") else list(t)
                 if len(vec) >= 2 and str(vec[0]).lower() == 'p':
@@ -196,7 +211,7 @@ async def run_single_cycle():
 
         for h_event in history_list:
             try:
-                tags_iter = h_event.tags() if callable(h_event.tags) else h_event.tags
+                tags_iter = get_event_tags_list(h_event)
                 for t in tags_iter:
                     vec = t.as_vec() if hasattr(t, "as_vec") else list(t)
                     if len(vec) >= 2:
@@ -279,7 +294,7 @@ async def run_single_cycle():
                 already_replied_authors.add(author_hex)
                 already_replied_events.add(event_id_hex)
 
-                print(f"-> CONFIRMED & PUBLISHED reply #{replies_count}: {reply_text[:60]}...")
+                print(f"-> CONFIRMED & PUBLISHED reply #{replies_count}:\n{reply_text}\n---")
             except asyncio.TimeoutError:
                 print("Relay publish timeout. Skipping to maintain speed...")
             except Exception as pub_err:
