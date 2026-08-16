@@ -94,7 +94,7 @@ async def fetch_existing_following(client, bot_pk):
     following_hex = set()
     try:
         f = Filter().author(bot_pk).kind(Kind(3)).limit(1)
-        events = await client.fetch_events(f, timedelta(seconds=5))
+        events = await client.fetch_events([f], timedelta(seconds=5))
         ev_list = events.to_vec() if hasattr(events, "to_vec") else list(events)
         if ev_list:
             latest_ev = ev_list[0]
@@ -119,7 +119,7 @@ async def process_follow_backs(client, bot_pk):
     interaction_filter = Filter().pubkey(bot_pk).kinds([Kind(1), Kind(6), Kind(7), Kind(9735)]).limit(100)
     
     try:
-        events_obj = await client.fetch_events(interaction_filter, timedelta(seconds=10))
+        events_obj = await client.fetch_events([interaction_filter], timedelta(seconds=10))
         events_list = events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj)
         
         for ev in events_list:
@@ -189,7 +189,7 @@ async def run_single_cycle():
     if bot_pk:
         history_filter = Filter().author(bot_pk).kind(Kind(1)).limit(500)
         try:
-            history_obj = await client.fetch_events(history_filter, timedelta(seconds=12))
+            history_obj = await client.fetch_events([history_filter], timedelta(seconds=12))
             history_list = history_obj.to_vec() if hasattr(history_obj, "to_vec") else list(history_obj)
         except Exception:
             history_list = []
@@ -208,7 +208,7 @@ async def run_single_cycle():
 
     f = Filter().kind(Kind(1)).limit(300)
     try:
-        events_obj = await client.fetch_events(f, timedelta(seconds=10))
+        events_obj = await client.fetch_events([f], timedelta(seconds=10))
         events_list = events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj)
     except Exception as e:
         print(f"Error fetching events: {e}")
