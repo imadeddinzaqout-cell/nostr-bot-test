@@ -17,7 +17,21 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 MAX_REPLIES = 10
 SLEEP_BETWEEN_CYCLES = 300
 
-# مكتبة متنوعة جداً من الخواتم لمنع أي تكرار
+# قائمة أوسع تشمل أقوى ريليهات نوستر في العالم لتوسيع الوصول لجميع التطبيقات
+GLOBAL_RELAYS = [
+    "wss://relay.damus.io",
+    "wss://nos.lol",
+    "wss://relay.primal.net",
+    "wss://relay.nostr.band",
+    "wss://relay.snort.social",
+    "wss://purplepag.es",
+    "wss://nostr.wine",
+    "wss://relay.current.fyi",
+    "wss://nostr.bitcoiner.social",
+    "wss://relay.plebstr.com",
+    "wss://eden.nostr.land"
+]
+
 DYNAMIC_CLOSINGS = [
     "🕊️ Documenting our family's daily reality in Gaza on my pinned post if you'd like to check it out.",
     "✨ Sharing raw updates & our personal story from Gaza on my pinned note.",
@@ -37,7 +51,6 @@ DYNAMIC_CLOSINGS = [
 ]
 
 def get_event_tags_list(event):
-    """استخراج قائمة الـ Tags بأمان متوافق مع كافة الإصدارات"""
     try:
         raw_tags = event.tags() if callable(event.tags) else event.tags
         if hasattr(raw_tags, "to_vec"):
@@ -91,8 +104,8 @@ def generate_ai_reply(prompt_text):
         "TASK:\n"
         "Write exactly ONE authentic, conversational, and direct sentence reacting specifically to what the author posted.\n\n"
         "RULES:\n"
-        "1. Write ONLY the 1-sentence reaction. Do NOT add any closing note, footer, or link (it will be added dynamically).\n"
-        "2. Do NOT use cliché chatbot openings like 'I agree', 'Great perspective', 'Thanks for sharing', 'It is interesting'.\n"
+        "1. Write ONLY the 1-sentence reaction. Do NOT add any closing note, footer, or link.\n"
+        "2. Do NOT use cliché chatbot openings like 'I agree', 'Great perspective', 'Thanks for sharing'.\n"
         "3. Sound like a real, thoughtful human on social media.\n"
         "4. If the post is non-English, pure spam, gibberish, or code, respond ONLY with: SKIP"
     )
@@ -114,18 +127,13 @@ def generate_ai_reply(prompt_text):
             if not is_clean_english(res_text):
                 return None
             
-            # اختيار خاتمة عشوائية متنوعة تماماً
             chosen_closing = random.choice(DYNAMIC_CLOSINGS)
-            
-            # دمج الرد مع الخاتمة عبر سطرين فارغين
-            full_reply = f"{res_text}\n\n{chosen_closing}"
-            return full_reply
+            return f"{res_text}\n\n{chosen_closing}"
     except Exception as e:
         print(f"Error calling DeepSeek API: {e}")
     return None
 
 async def fetch_existing_following(client, bot_pk):
-    """جلب قائمة المفاتيح التي يتابعها البوت حالياً لعدم تكرار المتابعة"""
     following_hex = set()
     try:
         f = Filter().author(bot_pk).kind(Kind(3)).limit(1)
@@ -143,7 +151,6 @@ async def fetch_existing_following(client, bot_pk):
     return following_hex
 
 async def process_follow_backs(client, bot_pk):
-    """متابعة أي شخص تفاعل مع الحساب (Reply, Repost, Zap, Reaction)"""
     if not bot_pk:
         return
 
@@ -154,7 +161,7 @@ async def process_follow_backs(client, bot_pk):
     interaction_filter = Filter().pubkey(bot_pk).kinds([Kind(1), Kind(6), Kind(7), Kind(9735)]).limit(100)
     
     try:
-        events_obj = await client.fetch_events([interaction_filter], timedelta(seconds=10))
+        events_obj = await client.fetch_events([interaction_filter], timedelta(seconds=8))
         events_list = events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj)
         
         for ev in events_list:
@@ -166,7 +173,6 @@ async def process_follow_backs(client, bot_pk):
 
         if interacted_authors:
             print(f"Found {len(interacted_authors)} new user(s) who interacted with your profile! Processing Follow Back...")
-            
             contacts = [PublicKey.parse(hex_str) for hex_str in existing_follows]
             for new_author in interacted_authors:
                 contacts.append(new_author)
@@ -174,9 +180,6 @@ async def process_follow_backs(client, bot_pk):
             builder = EventBuilder.contact_list(contacts)
             await client.send_event_builder(builder)
             print(f"-> Successfully followed back {len(interacted_authors)} user(s)!")
-        else:
-            print("No new interaction accounts to follow back at this time.")
-
     except Exception as e:
         print(f"Error processing follow-backs: {e}")
 
@@ -194,20 +197,15 @@ async def run_single_cycle():
 
     client = Client(signer)
 
-    relay_list = [
-        "wss://relay.damus.io",
-        "wss://nos.lol",
-        "wss://relay.primal.net",
-        "wss://relay.nostr.band"
-    ]
-    for r in relay_list:
+    # الاتصال بكافة الريليهات الكبرى لضمان النشر والاستماع عبر الشبكة بأكملها
+    for r in GLOBAL_RELAYS:
         try:
             await client.add_relay(r)
-        except Exception as e:
-            print(f"Error adding relay {r}: {e}")
+        except Exception:
+            pass
 
     await client.connect()
-    print("Connected to Nostr Relays!")
+    print("Connected to all Global Nostr Relays!")
 
     try:
         bot_pk = await signer.public_key()
@@ -222,9 +220,9 @@ async def run_single_cycle():
     already_replied_authors = set()
 
     if bot_pk:
-        history_filter = Filter().author(bot_pk).kind(Kind(1)).limit(500)
+        history_filter = Filter().author(bot_pk).kind(Kind(1)).limit(400)
         try:
-            history_obj = await client.fetch_events([history_filter], timedelta(seconds=12))
+            history_obj = await client.fetch_events([history_filter], timedelta(seconds=8))
             history_list = history_obj.to_vec() if hasattr(history_obj, "to_vec") else list(history_obj)
         except Exception:
             history_list = []
@@ -241,7 +239,7 @@ async def run_single_cycle():
             except Exception:
                 pass
 
-    f = Filter().kind(Kind(1)).limit(300)
+    f = Filter().kind(Kind(1)).limit(250)
     try:
         events_obj = await client.fetch_events([f], timedelta(seconds=10))
         events_list = events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj)
@@ -282,7 +280,7 @@ async def run_single_cycle():
         content = event.content() if callable(event.content) else event.content
         clean_content = content.strip() if content else ""
 
-        if not clean_content or len(clean_content) < 8: continue
+        if not clean_content or len(clean_content) < 10: continue
         if not is_clean_english(clean_content): continue
         if contains_video(clean_content) or is_spam(clean_content): continue
 
@@ -292,43 +290,39 @@ async def run_single_cycle():
                 like_builder = EventBuilder.reaction(event, "+")
                 await client.send_event_builder(like_builder)
                 print(f"-> Liked post: {event_id_hex[:8]}...")
-            except Exception as like_err:
-                print(f"Could not send like: {like_err}")
-
-            try:
-                t_event = Tag.parse(["e", event_id_hex, "", "reply"])
-                t_pubkey = Tag.parse(["p", author_hex])
-                builder = EventBuilder(Kind(1), reply_text, [t_event, t_pubkey])
             except Exception:
-                try:
-                    builder = EventBuilder.text_note(reply_text).tags([Tag.event(event_id_obj), Tag.public_key(author_pk)])
-                except Exception:
-                    builder = EventBuilder(Kind(1), reply_text, [Tag.event(event_id_obj), Tag.public_key(author_pk)])
+                pass
+
+            # بناء الرد بتوافق كامل مع بروتوكول NIP-10 لإرسال إشعار فوري
+            try:
+                t_root = Tag.parse(["e", event_id_hex, "", "root"])
+                t_reply = Tag.parse(["e", event_id_hex, "", "reply"])
+                t_pubkey = Tag.parse(["p", author_hex])
+                builder = EventBuilder(Kind(1), reply_text, [t_root, t_reply, t_pubkey])
+            except Exception:
+                builder = EventBuilder.text_note(reply_text).tags([Tag.event(event_id_obj), Tag.public_key(author_pk)])
 
             try:
-                print(f"Publishing reply #{replies_count + 1} to Nostr network...")
-                output = await asyncio.wait_for(client.send_event_builder(builder), timeout=15)
+                print(f"Publishing reply #{replies_count + 1} to Global Relays...")
+                await asyncio.wait_for(client.send_event_builder(builder), timeout=12)
                 
                 replies_count += 1
                 session_authors.add(author_hex)
                 already_replied_authors.add(author_hex)
                 already_replied_events.add(event_id_hex)
 
-                print(f"-> CONFIRMED & PUBLISHED reply #{replies_count}:\n{reply_text}\n---")
-            except asyncio.TimeoutError:
-                print("Relay publish timeout. Skipping to maintain speed...")
+                print(f"-> CONFIRMED & BROADCASTED reply #{replies_count}:\n{reply_text}\n---")
             except Exception as pub_err:
-                print(f"Publish error: {pub_err}")
+                print(f"Publish notice: {pub_err}")
 
             if replies_count < MAX_REPLIES:
-                fast_sleep = random.randint(5, 10)
-                print(f"Waiting {fast_sleep}s for next reply...")
+                fast_sleep = random.randint(6, 12)
                 await asyncio.sleep(fast_sleep)
 
-    print(f"Completed cycle! Successfully published {replies_count} replies.")
+    print(f"Completed cycle! Successfully published {replies_count} replies across all relays.")
 
 async def main():
-    print("Starting Nostr bot loop...")
+    print("Starting Global Nostr Bot Engine...")
     max_cycles = 60
     current_cycle = 0
 
@@ -341,10 +335,8 @@ async def main():
             print(f"Error in cycle execution: {e}")
         
         if current_cycle < max_cycles:
-            print(f"Waiting 5 minutes ({SLEEP_BETWEEN_CYCLES}s) before next batch of latest posts...")
+            print(f"Waiting 5 minutes ({SLEEP_BETWEEN_CYCLES}s) before next batch...")
             await asyncio.sleep(SLEEP_BETWEEN_CYCLES)
-
-    print("Completed all 5-hour cycles. Ready for the next workflow trigger.")
 
 if __name__ == "__main__":
     asyncio.run(main())
