@@ -1,303 +1,343 @@
 import os
 import re
-import json
 import random
 import asyncio
 import requests
 from datetime import timedelta
 from nostr_sdk import (
-    Client, NostrSigner, Keys, Filter, EventBuilder, Tag, Kind,
-    PublicKey
+    Client, NostrSigner, Keys, Filter, EventBuilder, Tag, Kind,
+    PublicKey
 )
 import sys
-
 sys.stdout.reconfigure(line_buffering=True)
 
 NOSTR_SECRET = os.getenv("NOSTR_NSEC", "").strip()
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 
-MAX_REPLIES = 8
-SLEEP_BETWEEN_CYCLES = 240
+MAX_REPLIES = 10
+SLEEP_BETWEEN_CYCLES = 300
 
-# أقوى ريليهات نوستر المركزية للبث والاستماع
+# قائمة أوسع تشمل أقوى ريليهات نوستر في العالم لتوسيع الوصول لجميع التطبيقات
 GLOBAL_RELAYS = [
-    "wss://relay.damus.io",
-    "wss://nos.lol",
-    "wss://relay.primal.net",
-    "wss://relay.nostr.band",
-    "wss://relay.snort.social",
-    "wss://purplepag.es",
-    "wss://nostr.wine",
-    "wss://relay.current.fyi",
-    "wss://nostr.bitcoiner.social",
-    "wss://relay.plebstr.com",
-    "wss://eden.nostr.land"
+    "wss://relay.damus.io",
+    "wss://nos.lol",
+    "wss://relay.primal.net",
+    "wss://relay.nostr.band",
+    "wss://relay.snort.social",
+    "wss://purplepag.es",
+    "wss://nostr.wine",
+    "wss://relay.current.fyi",
+    "wss://nostr.bitcoiner.social",
+    "wss://relay.plebstr.com",
+    "wss://eden.nostr.land"
 ]
 
 DYNAMIC_CLOSINGS = [
-    "🕊️ You can check our daily survival story & updates pinned at the top of my profile if you feel led to read.",
-    "🤍 We document our family's raw reality in Gaza on my pinned post if you'd like to take a look.",
-    "✨ Our personal journey of resilience is pinned on my profile—any zap or share helps us survive.",
-    "🌱 Quietly sharing our daily life amidst the ruins on my pinned note if you ever want to check.",
-    "🍉 If you have a moment, our story and campaign are pinned at the top of my page. Warm regards."
+    "🕊️ Documenting our family's daily reality in Gaza on my pinned post if you'd like to check it out.",
+    "✨ Sharing raw updates & our personal story from Gaza on my pinned note.",
+    "🍉 If you have a moment, our story and daily struggle in Gaza are pinned at the top of my profile.",
+    "🤍 Holding onto hope amidst the ruins—our journey is shared on my pinned post if you feel like reading.",
+    "🕊️ I share honest dispatches of our life in Gaza on my pinned post. Appreciate kind eyes on it.",
+    "🌱 Documenting what survival looks like for our family here on my pinned note if you wish to see.",
+    "✨ Sharing our lived reality from Gaza on my pinned thread. Wishing you peace.",
+    "🕊️ Pinned our personal story & updates on my profile if you'd like to connect with our reality in Gaza.",
+    "🍉 Sharing glimpses of our days and hope from Gaza on my pinned note.",
+    "🤍 Our story and family updates from northern Gaza are pinned on my profile if you care to read.",
+    "🕊️ Sharing raw reflections from our tent in Gaza on my pinned post if you'd like to take a look.",
+    "✨ Pinned our journey of resilience & survival here in Gaza at the top of my page.",
+    "🌱 Documenting our daily life amidst hardships on my pinned note. Sending warmth your way.",
+    "🕊️ Our personal diary and story from Gaza are pinned on my profile if you'd like to see.",
+    "🤍 Quietly sharing our family updates from Gaza on my pinned note if you ever want to check."
 ]
 
-def parse_bolt11_sats(bolt11_invoice):
-    try:
-        invoice_lower = str(bolt11_invoice).lower()
-        if "lnbc" in invoice_lower:
-            parts = invoice_lower.split("lnbc")[1]
-            num_str = ""
-            for ch in parts:
-                if ch.isdigit():
-                    num_str += ch
-                else:
-                    break
-            if num_str:
-                return int(num_str)
-    except Exception:
-        pass
-    return None
+def get_event_tags_list(event):
+    try:
+        raw_tags = event.tags() if callable(event.tags) else event.tags
+        if hasattr(raw_tags, "to_vec"):
+            return raw_tags.to_vec()
+        return list(raw_tags)
+    except Exception:
+        return []
 
-def extract_zap_data(event_tags):
-    sender_pubkey = None
-    target_event_id = None
-    sats_amount = None
+def is_clean_english(text):
+    if not text:
+        return False
+    cjk_pattern = re.compile(r'[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uffef\u4e00-\u9faf\uac00-\ud7af]')
+    if cjk_pattern.search(text):
+        return False
+    latin_chars = len(re.findall(r'[a-zA-Z0-9\s.,!?\'"\-]', text))
+    total_chars = len(text)
+    return total_chars > 0 and (latin_chars / total_chars) >= 0.65
 
-    for tag in event_tags:
-        vec = tag.as_vec() if hasattr(tag, "as_vec") else list(tag)
-        if len(vec) >= 2:
-            key = str(vec[0]).lower()
-            val = str(vec[1])
+def contains_video(text):
+    text_lower = text.lower()
+    video_extensions = r'\.(mp4|m3u8|mov|webm|avi|mkv|flv|wmv)(\?|\s|$)'
+    if re.search(video_extensions, text_lower):
+        return True
+    video_domains = ["youtube.com", "youtu.be", "vimeo.com", "tiktok.com", "rumble.com", "bitchute.com", "nostr.build/av/", "video/"]
+    return any(domain in text_lower for domain in video_domains)
 
-            if key == 'bolt11':
-                sats_amount = parse_bolt11_sats(val)
-            elif key == 'e':
-                target_event_id = val
-            elif key == 'description':
-                try:
-                    desc_obj = json.loads(val)
-                    if "pubkey" in desc_obj:
-                        sender_pubkey = desc_obj["pubkey"]
-                except Exception:
-                    pass
+def is_spam(text):
+    text_lower = text.lower()
+    if len(re.findall(r'https?://\S+', text)) >= 2:
+        return True
+    return any(kw in text_lower for kw in ["solana", "trycloudflare", "kill-fee", "moneymaker", "airdrop", "presale", "telegram", "crypto"])
 
-    return sender_pubkey, target_event_id, sats_amount
+def is_reply_or_quote(event):
+    try:
+        tags_iter = get_event_tags_list(event)
+        for t in tags_iter:
+            vec = t.as_vec() if hasattr(t, "as_vec") else list(t)
+            if len(vec) >= 1 and str(vec[0]).lower() == 'e':
+                return True
+    except Exception:
+        pass
+    return False
 
-def is_valid_human_name(raw_name):
-    if not raw_name:
-        return False
-    clean = re.sub(r'[^a-zA-Z]', '', raw_name).strip()
-    if len(clean) < 3 or len(clean) > 15:
-        return False
-    if clean.isupper():
-        return False
-    project_keywords = ["bot", "house", "media", "relay", "shop", "news", "app", "team", "club", "hub", "node", "pay"]
-    if any(kw in clean.lower() for kw in project_keywords):
-        return False
-    return True
+def generate_ai_reply(prompt_text):
+    if not prompt_text or len(prompt_text.strip()) < 5:
+        return None
 
-async def fetch_user_meta(client, author_pk):
-    name = None
-    last_post_id = None
-    try:
-        f = Filter().author(author_pk).kinds([Kind(0), Kind(1)]).limit(4)
-        events = await client.fetch_events([f], timedelta(seconds=4))
-        ev_list = events.to_vec() if hasattr(events, "to_vec") else list(events)
-        for ev in ev_list:
-            ev_kind = ev.kind().as_u64() if hasattr(ev.kind(), "as_u64") else int(ev.kind())
-            if ev_kind == 0 and not name:
-                content = json.loads(ev.content() if callable(ev.content) else ev.content or "{}")
-                name_val = content.get("display_name") or content.get("name")
-                if name_val:
-                    clean = re.sub(r'[^\w\s]', '', name_val).strip()
-                    if clean:
-                        first_word = clean.split()[0]
-                        if is_valid_human_name(first_word):
-                            name = first_word.capitalize()
-            elif ev_kind == 1 and not last_post_id:
-                ev_id_obj = ev.id() if callable(ev.id) else ev.id
-                last_post_id = ev_id_obj.to_hex() if hasattr(ev_id_obj, "to_hex") else str(ev_id_obj)
-    except Exception:
-        pass
-    return name, last_post_id
+    headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
+    system_instruction = (
+        "You are Imad, a genuine human being living through the hardships in Gaza, replying authentically on Nostr.\n\n"
+        "TASK:\n"
+        "Write exactly ONE authentic, conversational, and direct sentence reacting specifically to what the author posted.\n\n"
+        "RULES:\n"
+        "1. Write ONLY the 1-sentence reaction. Do NOT add any closing note, footer, or link.\n"
+        "2. Do NOT use cliché chatbot openings like 'I agree', 'Great perspective', 'Thanks for sharing'.\n"
+        "3. Sound like a real, thoughtful human on social media.\n"
+        "4. If the post is non-English, pure spam, gibberish, or code, respond ONLY with: SKIP"
+    )
 
-def generate_personalized_reply(sats_amount, user_name=None):
-    greeting = f"Hi {user_name}," if user_name else "Hi,"
-    headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
-    
-    amount_hint = f"They are an active supporter who zaps community creators on Nostr (around {sats_amount} sats)." if sats_amount else "They are active in supporting community creators with zaps on Nostr."
-    
-    system_instruction = (
-        "You are an authentic person surviving the hardships in Gaza, writing a warm, respectful public reply to a generous supporter on Nostr.\n\n"
-        "TASK:\n"
-        "Write exactly ONE sincere, natural sentence appreciating their generous warmth and active support/zaps across the Nostr community, while gently introducing your family's daily reality in Gaza with dignity.\n\n"
-        "RULES:\n"
-        "1. Do NOT imply they zapped you directly (they zapped creators across Nostr).\n"
-        "2. Do NOT include greetings (like Hi, Hello) or closings/links (added automatically).\n"
-        "3. Sound completely human, humble, and authentic.\n"
-        "4. Write in clean, fluent English."
-    )
+    payload = {
+        "model": "deepseek-chat",
+        "messages": [
+            {"role": "system", "content": system_instruction},
+            {"role": "user", "content": f"Post to reply to: '{prompt_text}'"}
+        ],
+        "temperature": 0.85
+    }
+    try:
+        response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=15)
+        if response.status_code == 200:
+            res_text = response.json()["choices"][0]["message"]["content"].strip().replace('"', '')
+            if "SKIP" in res_text or "can't react" in res_text.lower() or len(res_text) < 5:
+                return None
+            if not is_clean_english(res_text):
+                return None
+            
+            chosen_closing = random.choice(DYNAMIC_CLOSINGS)
+            return f"{res_text}\n\n{chosen_closing}"
+    except Exception as e:
+        print(f"Error calling DeepSeek API: {e}")
+    return None
 
-    payload = {
-        "model": "deepseek-chat",
-        "messages": [
-            {"role": "system", "content": system_instruction},
-            {"role": "user", "content": f"Context: {amount_hint}. Write the single sentence."}
-        ],
-        "temperature": 0.85
-    }
+async def fetch_existing_following(client, bot_pk):
+    following_hex = set()
+    try:
+        f = Filter().author(bot_pk).kind(Kind(3)).limit(1)
+        events = await client.fetch_events([f], timedelta(seconds=5))
+        ev_list = events.to_vec() if hasattr(events, "to_vec") else list(events)
+        if ev_list:
+            latest_ev = ev_list[0]
+            tags_iter = get_event_tags_list(latest_ev)
+            for t in tags_iter:
+                vec = t.as_vec() if hasattr(t, "as_vec") else list(t)
+                if len(vec) >= 2 and str(vec[0]).lower() == 'p':
+                    following_hex.add(str(vec[1]).lower())
+    except Exception as e:
+        print(f"Error fetching existing following list: {e}")
+    return following_hex
 
-    try:
-        response = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=12)
-        if response.status_code == 200:
-            res_text = response.json()["choices"][0]["message"]["content"].strip().replace('"', '')
-            if len(res_text) > 15:
-                closing = random.choice(DYNAMIC_CLOSINGS)
-                return f"{greeting} {res_text}\n\n{closing}"
-    except Exception as e:
-        print(f"Error calling DeepSeek API: {e}")
+async def process_follow_backs(client, bot_pk):
+    if not bot_pk:
+        return
 
-    return (
-        f"{greeting} Seeing your generous warmth and active support across Nostr brings genuine hope. "
-        f"My family and I are enduring critical hardships in Gaza right now.\n\n"
-        f"{random.choice(DYNAMIC_CLOSINGS)}"
-    )
+    print("Checking for new user interactions (Replies, Reposts, Zaps, Reactions)...")
+    existing_follows = await fetch_existing_following(client, bot_pk)
+    interacted_authors = set()
+
+    interaction_filter = Filter().pubkey(bot_pk).kinds([Kind(1), Kind(6), Kind(7), Kind(9735)]).limit(100)
+    
+    try:
+        events_obj = await client.fetch_events([interaction_filter], timedelta(seconds=8))
+        events_list = events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj)
+        
+        for ev in events_list:
+            author_pk = ev.author() if callable(ev.author) else ev.author
+            author_hex = author_pk.to_hex().lower()
+            
+            if author_hex != bot_pk.to_hex().lower() and author_hex not in existing_follows:
+                interacted_authors.add(author_pk)
+
+        if interacted_authors:
+            print(f"Found {len(interacted_authors)} new user(s) who interacted with your profile! Processing Follow Back...")
+            contacts = [PublicKey.parse(hex_str) for hex_str in existing_follows]
+            for new_author in interacted_authors:
+                contacts.append(new_author)
+
+            builder = EventBuilder.contact_list(contacts)
+            await client.send_event_builder(builder)
+            print(f"-> Successfully followed back {len(interacted_authors)} user(s)!")
+    except Exception as e:
+        print(f"Error processing follow-backs: {e}")
 
 async def run_single_cycle():
-    if not NOSTR_SECRET or not DEEPSEEK_API_KEY:
-        print("Error: Missing secrets in GitHub.")
-        return
+    if not NOSTR_SECRET or not DEEPSEEK_API_KEY:
+        print("Error: Missing secrets in GitHub.")
+        return
 
-    try:
-        keys = Keys.parse(NOSTR_SECRET)
-        signer = NostrSigner.keys(keys)
-    except Exception as e:
-        print(f"Error parsing keys: {e}")
-        return
+    try:
+        keys = Keys.parse(NOSTR_SECRET)
+        signer = NostrSigner.keys(keys)
+    except Exception as e:
+        print(f"Error parsing keys: {e}")
+        return
 
-    client = Client(signer)
+    client = Client(signer)
 
-    for r in GLOBAL_RELAYS:
-        try:
-            await client.add_relay(r)
-        except Exception:
-            pass
+    # الاتصال بكافة الريليهات الكبرى لضمان النشر والاستماع عبر الشبكة بأكملها
+    for r in GLOBAL_RELAYS:
+        try:
+            await client.add_relay(r)
+        except Exception:
+            pass
 
-    await client.connect()
-    print("Connected to Global Nostr Relays!")
+    await client.connect()
+    print("Connected to all Global Nostr Relays!")
 
-    bot_pk = keys.public_key()
-    bot_hex = bot_pk.to_hex().lower()
+    try:
+        bot_pk = await signer.public_key()
+    except Exception:
+        bot_pk = keys.public_key()
 
-    # قراءة سجل الردود الحية من الشبكة لمنع أي تعارض مع السكربت الأول
-    already_replied_events = set()
-    already_replied_authors = set()
+    if bot_pk:
+        await process_follow_backs(client, bot_pk)
 
-    try:
-        history_filter = Filter().author(bot_pk).kind(Kind(1)).limit(300)
-        history_obj = await client.fetch_events([history_filter], timedelta(seconds=6))
-        history_list = history_obj.to_vec() if hasattr(history_obj, "to_vec") else list(history_obj)
-        for h_event in history_list:
-            raw_tags = h_event.tags() if callable(h_event.tags) else h_event.tags
-            tag_list = raw_tags.to_vec() if hasattr(raw_tags, "to_vec") else list(raw_tags)
-            for t in tag_list:
-                vec = t.as_vec() if hasattr(t, "as_vec") else list(t)
-                if len(vec) >= 2:
-                    t_type, t_val = str(vec[0]).lower(), str(vec[1]).lower()
-                    if t_type == 'e': already_replied_events.add(t_val)
-                    elif t_type == 'p': already_replied_authors.add(t_val)
-    except Exception as e:
-        print(f"Notice fetching history: {e}")
+    bot_hex = bot_pk.to_hex().lower() if bot_pk else ""
+    already_replied_events = set()
+    already_replied_authors = set()
 
-    # البحث عن آخر أحداث الـ Zaps (Kind 9735) في الشبكة
-    print("Scanning Nostr network for Zap events...")
-    zap_filter = Filter().kind(Kind(9735)).limit(100)
-    try:
-        zap_events = await client.fetch_events([zap_filter], timedelta(seconds=8))
-        zap_list = zap_events.to_vec() if hasattr(zap_events, "to_vec") else list(zap_events)
-    except Exception as e:
-        print(f"Error fetching zaps: {e}")
-        return
+    if bot_pk:
+        history_filter = Filter().author(bot_pk).kind(Kind(1)).limit(400)
+        try:
+            history_obj = await client.fetch_events([history_filter], timedelta(seconds=8))
+            history_list = history_obj.to_vec() if hasattr(history_obj, "to_vec") else list(history_obj)
+        except Exception:
+            history_list = []
 
-    print(f"Fetched {len(zap_list)} zap receipts.")
-    if not zap_list:
-        return
+        for h_event in history_list:
+            try:
+                tags_iter = get_event_tags_list(h_event)
+                for t in tags_iter:
+                    vec = t.as_vec() if hasattr(t, "as_vec") else list(t)
+                    if len(vec) >= 2:
+                        tag_type, tag_val = str(vec[0]).lower(), str(vec[1]).lower()
+                        if tag_type == 'e': already_replied_events.add(tag_val)
+                        elif tag_type == 'p': already_replied_authors.add(tag_val)
+            except Exception:
+                pass
 
-    replies_count = 0
-    session_senders = set()
+    f = Filter().kind(Kind(1)).limit(250)
+    try:
+        events_obj = await client.fetch_events([f], timedelta(seconds=10))
+        events_list = events_obj.to_vec() if hasattr(events_obj, "to_vec") else list(events_obj)
+    except Exception as e:
+        print(f"Error fetching events: {e}")
+        return
 
-    for z_event in zap_list:
-        if replies_count >= MAX_REPLIES:
-            break
+    if not events_list:
+        print("No events found.")
+        return
 
-        raw_tags = z_event.tags() if callable(z_event.tags) else z_event.tags
-        tags_list = raw_tags.to_vec() if hasattr(raw_tags, "to_vec") else list(raw_tags)
-        
-        sender_hex, target_event_id, sats = extract_zap_data(tags_list)
-        if not sender_hex:
-            continue
+    def get_event_time(ev):
+        try:
+            return ev.created_at().as_secs() if callable(ev.created_at) else getattr(ev, 'created_at', 0)
+        except Exception:
+            return 0
 
-        sender_hex = sender_hex.lower()
-        if sender_hex == bot_hex:
-            continue
-        if sender_hex in already_replied_authors or sender_hex in session_senders:
-            continue
+    events_list.sort(key=get_event_time, reverse=True)
 
-        try:
-            target_pk = PublicKey.parse(sender_hex)
-        except Exception:
-            continue
+    replies_count = 0
+    session_authors = set()
 
-        session_senders.add(sender_hex)
+    for event in events_list:
+        if replies_count >= MAX_REPLIES:
+            break
 
-        user_name, last_post_id = await fetch_user_meta(client, target_pk)
-        event_to_reply = target_event_id or last_post_id
-        if not event_to_reply or event_to_reply in already_replied_events:
-            continue
+        event_id_obj = event.id() if callable(event.id) else event.id
+        event_id_hex = (event_id_obj.to_hex() if hasattr(event_id_obj, "to_hex") else str(event_id_obj)).lower()
 
-        reply_text = await asyncio.to_thread(generate_personalized_reply, sats, user_name)
-        if not reply_text:
-            continue
+        author_pk = event.author() if callable(event.author) else event.author
+        author_hex = author_pk.to_hex().lower()
 
-        try:
-            # وسم NIP-10 المعتمد
-            t_root = Tag.parse(["e", event_to_reply, "", "root"])
-            t_reply = Tag.parse(["e", event_to_reply, "", "reply"])
-            t_pubkey = Tag.parse(["p", sender_hex])
-            builder = EventBuilder(Kind(1), reply_text).tags([t_root, t_reply, t_pubkey])
+        if bot_hex and author_hex == bot_hex: continue
+        if event_id_hex in already_replied_events: continue
+        if author_hex in session_authors or author_hex in already_replied_authors: continue
+        if is_reply_or_quote(event): continue
 
-            await client.send_event_builder(builder)
+        content = event.content() if callable(event.content) else event.content
+        clean_content = content.strip() if content else ""
 
-            replies_count += 1
-            already_replied_authors.add(sender_hex)
-            already_replied_events.add(event_to_reply)
+        if not clean_content or len(clean_content) < 10: continue
+        if not is_clean_english(clean_content): continue
+        if contains_video(clean_content) or is_spam(clean_content): continue
 
-            print(f"-> Successfully replied #{replies_count} to {user_name or 'Supporter'} [{sats or 'Active'} Sats]:")
-            print(f"\"{reply_text}\"\n" + "-"*50)
+        reply_text = await asyncio.to_thread(generate_ai_reply, clean_content)
+        if reply_text:
+            try:
+                like_builder = EventBuilder.reaction(event, "+")
+                await client.send_event_builder(like_builder)
+                print(f"-> Liked post: {event_id_hex[:8]}...")
+            except Exception:
+                pass
 
-            if replies_count < MAX_REPLIES:
-                await asyncio.sleep(random.randint(6, 12))
+            # بناء الرد بتوافق كامل مع بروتوكول NIP-10 لإرسال إشعار فوري
+            try:
+                t_root = Tag.parse(["e", event_id_hex, "", "root"])
+                t_reply = Tag.parse(["e", event_id_hex, "", "reply"])
+                t_pubkey = Tag.parse(["p", author_hex])
+                builder = EventBuilder(Kind(1), reply_text, [t_root, t_reply, t_pubkey])
+            except Exception:
+                builder = EventBuilder.text_note(reply_text).tags([Tag.event(event_id_obj), Tag.public_key(author_pk)])
 
-        except Exception as send_err:
-            print(f"Notice sending reply: {send_err}")
+            try:
+                print(f"Publishing reply #{replies_count + 1} to Global Relays...")
+                await asyncio.wait_for(client.send_event_builder(builder), timeout=12)
+                
+                replies_count += 1
+                session_authors.add(author_hex)
+                already_replied_authors.add(author_hex)
+                already_replied_events.add(event_id_hex)
 
-    print(f"Cycle finished: Sent {replies_count} targeted replies.")
+                print(f"-> CONFIRMED & BROADCASTED reply #{replies_count}:\n{reply_text}\n---")
+            except Exception as pub_err:
+                print(f"Publish notice: {pub_err}")
+
+            if replies_count < MAX_REPLIES:
+                fast_sleep = random.randint(6, 12)
+                await asyncio.sleep(fast_sleep)
+
+    print(f"Completed cycle! Successfully published {replies_count} replies across all relays.")
 
 async def main():
-    print("Starting Global Nostr Zap Supporter Bot...")
-    cycle = 0
+    print("Starting Global Nostr Bot Engine...")
+    max_cycles = 60
+    current_cycle = 0
 
-    while True:
-        cycle += 1
-        print(f"\n--- Starting Cycle #{cycle} ---")
-        try:
-            await run_single_cycle()
-        except Exception as e:
-            print(f"Error in cycle execution: {e}")
-
-        print(f"Waiting 4 minutes ({SLEEP_BETWEEN_CYCLES}s) before next scan...")
-        await asyncio.sleep(SLEEP_BETWEEN_CYCLES)
+    while current_cycle < max_cycles:
+        current_cycle += 1
+        print(f"\n--- Starting Cycle {current_cycle}/{max_cycles} ---")
+        try:
+            await run_single_cycle()
+        except Exception as e:
+            print(f"Error in cycle execution: {e}")
+        
+        if current_cycle < max_cycles:
+            print(f"Waiting 5 minutes ({SLEEP_BETWEEN_CYCLES}s) before next batch...")
+            await asyncio.sleep(SLEEP_BETWEEN_CYCLES)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main())
+ شايف هذا الكود لسكربت نسخة انت عملتها بتقدر تعدل عليه وتجعله زي الكود الاخير يرسل للمتبرعين فقط دون تعارض مع السكربت الاول ؟
