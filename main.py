@@ -5,11 +5,10 @@ import asyncio
 import requests
 from datetime import timedelta
 from nostr_sdk import (
-    Client, Keys, Filter, EventBuilder, Tag, Kind,
+    Client, NostrSigner, Keys, Filter, EventBuilder, Tag, Kind,
     PublicKey
 )
 import sys
-
 sys.stdout.reconfigure(line_buffering=True)
 
 NOSTR_SECRET = os.getenv("NOSTR_NSEC", "").strip()
@@ -100,7 +99,7 @@ def generate_ai_reply(prompt_text):
 
     headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
     system_instruction = (
-        "You are a genuine human being living through the hardships in Gaza, replying authentically on Nostr.\n\n"
+        "You are an authentic person living through the hardships in Gaza, replying authentically on Nostr.\n\n"
         "TASK:\n"
         "Write exactly ONE authentic, conversational, and direct sentence reacting specifically to what the author posted.\n\n"
         "RULES:\n"
@@ -190,12 +189,15 @@ async def run_single_cycle():
 
     try:
         keys = Keys.parse(NOSTR_SECRET)
+        try:
+            signer = NostrSigner.keys(keys)
+        except Exception:
+            signer = NostrSigner.from_keys(keys)
     except Exception as e:
         print(f"Error parsing keys: {e}")
         return
 
-    # استخدام المفاتيح مباشرة لتفادي خطأ NostrSigner
-    client = Client(keys)
+    client = Client(signer)
 
     for r in GLOBAL_RELAYS:
         try:
@@ -206,7 +208,11 @@ async def run_single_cycle():
     await client.connect()
     print("Connected to all Global Nostr Relays!")
 
-    bot_pk = keys.public_key()
+    try:
+        bot_pk = await signer.public_key()
+    except Exception:
+        bot_pk = keys.public_key()
+
     bot_hex = bot_pk.to_hex().lower() if bot_pk else ""
 
     if bot_pk:
@@ -293,7 +299,6 @@ async def run_single_cycle():
                 t_root = Tag.parse(["e", event_id_hex, "", "root"])
                 t_reply = Tag.parse(["e", event_id_hex, "", "reply"])
                 t_pubkey = Tag.parse(["p", author_hex])
-                # الصيغة المتوافقة تماماً مع nostr-sdk
                 builder = EventBuilder(Kind(1), reply_text).tags([t_root, t_reply, t_pubkey])
             except Exception:
                 builder = EventBuilder.text_note(reply_text).tags([Tag.event(event_id_obj), Tag.public_key(author_pk)])
