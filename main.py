@@ -190,7 +190,7 @@ async def run_single_cycle():
     bot_pk = keys.public_key()
     bot_hex = bot_pk.to_hex().lower()
 
-    # قراءة سجل الردود الحية من الشبكة لمنع أي تعارض مع أي سكربت آخر
+    # قراءة سجل الردود الحية من الشبكة لمنع أي تعارض مع السكربت الأول
     already_replied_events = set()
     already_replied_authors = set()
 
@@ -265,7 +265,7 @@ async def run_single_cycle():
             t_root = Tag.parse(["e", event_to_reply, "", "root"])
             t_reply = Tag.parse(["e", event_to_reply, "", "reply"])
             t_pubkey = Tag.parse(["p", sender_hex])
-            builder = EventBuilder(Kind(1), reply_text, [t_root, t_reply, t_pubkey])
+            builder = EventBuilder(Kind(1), reply_text).tags([t_root, t_reply, t_pubkey])
 
             await client.send_event_builder(builder)
 
