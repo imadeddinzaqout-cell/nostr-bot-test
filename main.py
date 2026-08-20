@@ -6,13 +6,16 @@ import requests
 from datetime import timedelta
 from nostr_sdk import (
     Client, NostrSigner, Keys, Filter, EventBuilder, Tag, Kind,
-    PublicKey
+    PublicKey, Contact
 )
 import sys
 sys.stdout.reconfigure(line_buffering=True)
 
 NOSTR_SECRET = os.getenv("NOSTR_NSEC", "").strip()
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
+
+# رابط الصورة المباشر
+IMAGE_URL = "https://i.postimg.cc/1zv9VTqN/altqaaat.png"
 
 MAX_REPLIES = 10
 SLEEP_BETWEEN_CYCLES = 300
@@ -32,21 +35,21 @@ GLOBAL_RELAYS = [
 ]
 
 DYNAMIC_CLOSINGS = [
-    "🕊️ Documenting our family's daily reality in Gaza on my pinned post if you'd like to check it out.",
-    "✨ Sharing raw updates & our personal story from Gaza on my pinned note.",
-    "🍉 If you have a moment, our story and daily struggle in Gaza are pinned at the top of my profile.",
-    "🤍 Holding onto hope amidst the ruins—our journey is shared on my pinned post if you feel like reading.",
-    "🕊️ I share honest dispatches of our life in Gaza on my pinned post. Appreciate kind eyes on it.",
-    "🌱 Documenting what survival looks like for our family here on my pinned note if you wish to see.",
-    "✨ Sharing our lived reality from Gaza on my pinned thread. Wishing you peace.",
-    "🕊️ Pinned our personal story & updates on my profile if you'd like to connect with our reality in Gaza.",
-    "🍉 Sharing glimpses of our days and hope from Gaza on my pinned note.",
-    "🤍 Our story and family updates from northern Gaza are pinned on my profile if you care to read.",
-    "🕊️ Sharing raw reflections from our tent in Gaza on my pinned post if you'd like to take a look.",
-    "✨ Pinned our journey of resilience & survival here in Gaza at the top of my page.",
-    "🌱 Documenting our daily life amidst hardships on my pinned note. Sending warmth your way.",
-    "🕊️ Our personal diary and story from Gaza are pinned on my profile if you'd like to see.",
-    "🤍 Quietly sharing our family updates from Gaza on my pinned note if you ever want to check."
+    f"🕊️ Documenting our family's daily reality in Gaza on my pinned post if you'd like to check it out.\n\n{IMAGE_URL}",
+    f"✨ Sharing raw updates & our personal story from Gaza on my pinned note.\n\n{IMAGE_URL}",
+    f"🍉 If you have a moment, our story and daily struggle in Gaza are pinned at the top of my profile.\n\n{IMAGE_URL}",
+    f"🤍 Holding onto hope amidst the ruins—our journey is shared on my pinned post if you feel like reading.\n\n{IMAGE_URL}",
+    f"🕊️ I share honest dispatches of our life in Gaza on my pinned post. Appreciate kind eyes on it.\n\n{IMAGE_URL}",
+    f"🌱 Documenting what survival looks like for our family here on my pinned note if you wish to see.\n\n{IMAGE_URL}",
+    f"✨ Sharing our lived reality from Gaza on my pinned thread. Wishing you peace.\n\n{IMAGE_URL}",
+    f"🕊️ Pinned our personal story & updates on my profile if you'd like to connect with our reality in Gaza.\n\n{IMAGE_URL}",
+    f"🍉 Sharing glimpses of our days and hope from Gaza on my pinned note.\n\n{IMAGE_URL}",
+    f"🤍 Our story and family updates from northern Gaza are pinned on my profile if you care to read.\n\n{IMAGE_URL}",
+    f"🕊️ Sharing raw reflections from our tent in Gaza on my pinned post if you'd like to take a look.\n\n{IMAGE_URL}",
+    f"✨ Pinned our journey of resilience & survival here in Gaza at the top of my page.\n\n{IMAGE_URL}",
+    f"🌱 Documenting our daily life amidst hardships on my pinned note. Sending warmth your way.\n\n{IMAGE_URL}",
+    f"🕊️ Our personal diary and story from Gaza are pinned on my profile if you'd like to see.\n\n{IMAGE_URL}",
+    f"🤍 Quietly sharing our family updates from Gaza on my pinned note if you ever want to check.\n\n{IMAGE_URL}"
 ]
 
 def get_event_tags_list(event):
@@ -172,9 +175,17 @@ async def process_follow_backs(client, bot_pk):
 
         if interacted_authors:
             print(f"Found {len(interacted_authors)} new user(s) who interacted with your profile! Processing Follow Back...")
-            contacts = [PublicKey.parse(hex_str) for hex_str in existing_follows]
+            contacts = []
+            for hex_str in existing_follows:
+                try:
+                    contacts.append(Contact(PublicKey.parse(hex_str), None, None))
+                except Exception:
+                    pass
             for new_author in interacted_authors:
-                contacts.append(new_author)
+                try:
+                    contacts.append(Contact(new_author, None, None))
+                except Exception:
+                    pass
 
             builder = EventBuilder.contact_list(contacts)
             await client.send_event_builder(builder)
@@ -299,9 +310,10 @@ async def run_single_cycle():
                 t_root = Tag.parse(["e", event_id_hex, "", "root"])
                 t_reply = Tag.parse(["e", event_id_hex, "", "reply"])
                 t_pubkey = Tag.parse(["p", author_hex])
-                builder = EventBuilder(Kind(1), reply_text).tags([t_root, t_reply, t_pubkey])
+                t_img = Tag.parse(["r", IMAGE_URL])
+                builder = EventBuilder(Kind(1), reply_text).tags([t_root, t_reply, t_pubkey, t_img])
             except Exception:
-                builder = EventBuilder.text_note(reply_text).tags([Tag.event(event_id_obj), Tag.public_key(author_pk)])
+                builder = EventBuilder.text_note(reply_text).tags([Tag.event(event_id_obj), Tag.public_key(author_pk), Tag.parse(["r", IMAGE_URL])])
 
             try:
                 print(f"Publishing reply #{replies_count + 1} to Global Relays...")
